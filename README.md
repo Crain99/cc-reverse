@@ -3,4 +3,3 @@
 -->
 # cc-reverse
 Cocos Creator逆向工具
-node main.js
