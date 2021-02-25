@@ -7,7 +7,6 @@ const fs = require('fs');
 const decodeUuid = require("./decode");
 const _name = "project"
 const id = decodeUuid(stringRandom(22))
-const tool = require("./tools")
 const project = {
     "engine": "cocos-creator-js",
     "packages": "packages",
@@ -94,7 +93,6 @@ function init() {
     fs.writeFileSync("./project/project.json", JSON.stringify(project))
     fs.writeFileSync("./project/jsconfig.json", JSON.stringify(jsconfig))
     fs.writeFileSync("./project/tsconfig.json", JSON.stringify(tsconfig))
-    //console.log(settings_project)
 }
 module.exports = {
     init
