@@ -7,6 +7,16 @@
 
 Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中提取和重建源代码与资源。
 
+[![GitHub stars](https://img.shields.io/github/stars/Crain99/cc-reverse.svg?style=social&label=Star&maxAge=2592000)](https://github.com/Crain99/cc-reverse/stargazers/)
+[![License](https://img.shields.io/github/license/Crain99/cc-reverse.svg)](https://github.com/Crain99/cc-reverse/blob/main/LICENSE)
+[![npm version](https://img.shields.io/npm/v/cc-reverse.svg)](https://www.npmjs.com/package/cc-reverse)
+
+## Star 趋势
+
+如果您觉得这个项目对您有帮助，请给我们一个 Star ⭐️，这是对我们最大的鼓励！
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Crain99/cc-reverse&type=Date)](https://star-history.com/#Crain99/cc-reverse&Date)
+
 ## 功能特性
 
 - 解析和重建 Cocos Creator 项目结构
@@ -31,7 +41,7 @@ cc-reverse --path <源项目路径>
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-username/cc-reverse.git
+git clone https://github.com/Crain99/cc-reverse.git
 cd cc-reverse
 
 # 安装依赖
@@ -158,6 +168,16 @@ npm run test
 # 构建
 npm run build
 ```
+
+## 支持项目
+
+如果您觉得这个项目对您有所帮助，请考虑给我们一个 Star ⭐️！您的支持是我们持续改进的动力。
+
+<p align="center">
+  <a href="https://github.com/Crain99/cc-reverse">
+    <img src="https://img.shields.io/github/stars/Crain99/cc-reverse?style=social" alt="给项目点个Star">
+  </a>
+</p>
 
 ## 许可证
 
