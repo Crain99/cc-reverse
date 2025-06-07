@@ -6,12 +6,7 @@
 # cc-reverse
 
 Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中提取和重建源代码与资源。
-
-[![GitHub stars](https://img.shields.io/github/stars/Crain99/cc-reverse.svg?style=social&label=Star&maxAge=2592000)](https://github.com/Crain99/cc-reverse/stargazers/)
-[![License](https://img.shields.io/github/license/Crain99/cc-reverse.svg)](https://github.com/Crain99/cc-reverse/blob/main/LICENSE)
-[![npm version](https://img.shields.io/npm/v/cc-reverse.svg)](https://www.npmjs.com/package/cc-reverse)
-
-## Star 趋势
+## 项目热度
 
 如果您觉得这个项目对您有帮助，请给我们一个 Star ⭐️，这是对我们最大的鼓励！
 
