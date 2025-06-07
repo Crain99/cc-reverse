@@ -47,26 +47,8 @@ const codeAnalyzer = {
                 },
             };
             
-            // 3. 定义分割访问者
-            const splitVisitor = {
-                Property(path) {
-                    const { node } = path;
-                    if (values.length > 0) {
-                        for (let value of values) {
-                            if (node && (node.key.name == value || node.key.value == value) && node.value.elements) {
-                                // 处理模块参数
-                                const moduleParams = this.processModuleParams(node);
-                                
-                                // 处理节点元素
-                                this.processNodeElements(node, value);
-                            }
-                        }
-                    }
-                }
-            };
-            
-            // 添加方法到 splitVisitor
-            splitVisitor.processModuleParams = function(node) {
+            // 辅助函数 - 处理模块参数
+            const processModuleParams = function(node) {
                 let _require = node.value.elements[0].params[0].name;
                 let _module = node.value.elements[0].params[1].name;
                 let _exports = node.value.elements[0].params[2].name;
@@ -91,20 +73,8 @@ const codeAnalyzer = {
                 return { _require, _module, _exports };
             };
             
-            splitVisitor.processNodeElements = function(node, value) {
-                for (let i of node.value.elements[0].body.body) {
-                    // 生成元数据文件
-                    this.generateMetaFiles(i);
-                    
-                    // 处理导入路径
-                    this.processImportPaths(i);
-                }
-                
-                // 保存 AST 到文件
-                this.saveAstToFile(node, value);
-            };
-            
-            splitVisitor.generateMetaFiles = function(node) {
+            // 辅助函数 - 生成元数据文件
+            const generateMetaFiles = function(node) {
                 if (node.type == 'ExpressionStatement') {
                     // 处理表达式数组
                     if (node.expression.expressions) {
@@ -137,7 +107,8 @@ const codeAnalyzer = {
                 }
             };
             
-            splitVisitor.processImportPaths = function(node) {
+            // 辅助函数 - 处理导入路径
+            const processImportPaths = function(node) {
                 // 处理变量声明中的导入路径
                 if (node.type == 'VariableDeclaration' && node.declarations) {
                     for (let j of node.declarations) {
@@ -176,7 +147,8 @@ const codeAnalyzer = {
                 }
             };
             
-            splitVisitor.saveAstToFile = async function(node, value) {
+            // 辅助函数 - 保存 AST 到文件
+            const saveAstToFile = async function(node, value) {
                 try {
                     const str = JSON.stringify(node.value.elements[0].body);
                     const astPath = path.join(global.paths.ast, `${value}.json`);
@@ -192,9 +164,41 @@ const codeAnalyzer = {
                 }
             };
             
+            // 辅助函数 - 处理节点元素
+            const processNodeElements = async function(node, value) {
+                for (let i of node.value.elements[0].body.body) {
+                    // 生成元数据文件
+                    generateMetaFiles(i);
+                    
+                    // 处理导入路径
+                    processImportPaths(i);
+                }
+                
+                // 保存 AST 到文件
+                await saveAstToFile(node, value);
+            };
+            
+            // 3. 定义分割访问者 - 只包含合法的 Babel 访问器方法
+            const splitVisitor = {
+                Property(path) {
+                    const { node } = path;
+                    if (values.length > 0) {
+                        for (let value of values) {
+                            if (node && (node.key.name == value || node.key.value == value) && node.value.elements) {
+                                // 处理模块参数 - 这里直接调用辅助函数
+                                processModuleParams(node);
+                                
+                                // 处理节点元素 - 这里直接调用辅助函数
+                                processNodeElements(node, value);
+                            }
+                        }
+                    }
+                }
+            };
+            
             // 遍历 AST
-            await traverse.default(ast, findValue);
-            await traverse.default(ast, splitVisitor);
+            traverse.default(ast, findValue);
+            traverse.default(ast, splitVisitor);
             
             // 处理 AST 文件生成代码
             await this.processAstFiles();
