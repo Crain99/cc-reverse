@@ -31,6 +31,17 @@ const resourceProcessor = {
     spriteFrames: {},
     audio: [],
     animation: [],
+
+    /**
+     * 获取 Cocos 配置对象
+     * @returns {Object}
+     */
+    getCCSettings() {
+        if (!global.settings) {
+            return {};
+        }
+        return global.settings.CCSettings || global.settings;
+    },
     
     /**
      * 处理资源文件
@@ -105,7 +116,8 @@ const resourceProcessor = {
      * @returns {Promise<void>}
      */
     async processSubpackages() {
-        if (global.settings && !this.isEmptyObject(global.settings["subpackages"])) {
+        const settings = this.getCCSettings();
+        if (!this.isEmptyObject(settings["subpackages"])) {
             const subpackagesPath = path.dirname(global.paths.res) + '/subpackages';
             
             if (fs.existsSync(subpackagesPath)) {
@@ -180,13 +192,21 @@ const resourceProcessor = {
      * @param {string} key 键名
      */
     writeProcessedData(data, key) {
+        if (!data || typeof data !== "object") {
+            return;
+        }
+
         if (typeof data === "object" && data["__type__"]) {
             this.processTypeData(data, key);
         } else {
             for (let i in data) {
-                const type = data[i]['__type__'];
-                if (Array.isArray(data[i])) {
-                    this.writeProcessedData(data[i], key);
+                const item = data[i];
+                if (!item || typeof item !== "object") {
+                    continue;
+                }
+                const type = item['__type__'];
+                if (Array.isArray(item)) {
+                    this.writeProcessedData(item, key);
                 } else if (type) {
                     this.processTypeObject(type, data, i, key);
                 }
@@ -354,8 +374,9 @@ const resourceProcessor = {
      * @returns {string} 库 ID
      */
     createLibrary(index, key) {
-        if (global.settings && global.settings.uuids) {
-            return global.settings.uuids[key] || uuidUtils.generateUuid();
+        const settings = this.getCCSettings();
+        if (settings.uuids) {
+            return settings.uuids[key] || uuidUtils.generateUuid();
         }
         return uuidUtils.generateUuid();
     },

@@ -95,31 +95,50 @@ async function reverseProject(options) {
  * @returns {Object} 包含版本信息和文件路径的对象
  */
 function detectProjectVersion(sourcePath, versionHint) {
+  const normalizedSourcePath = path.resolve(sourcePath);
+  const sourceBasename = path.basename(normalizedSourcePath);
+  const candidateRoots = [normalizedSourcePath];
+
+  // 兼容用户直接传入 assets/res 目录的场景
+  if (sourceBasename === 'assets' || sourceBasename === 'res') {
+    candidateRoots.push(path.dirname(normalizedSourcePath));
+  }
+
+  // 去重
+  const uniqueCandidateRoots = [...new Set(candidateRoots)];
+
+  function buildPaths(basePath) {
+    return {
+      // 2.4.x 主要检查build目录下的文件
+      settings: [
+        path.resolve(basePath, 'main.js'),
+        path.resolve(basePath, 'settings.js'),
+        path.resolve(basePath, 'src/settings.js')
+      ],
+      project: [
+        path.resolve(basePath, 'project.js'),
+        path.resolve(basePath, 'main.js'),
+        path.resolve(basePath, 'src/project.js')
+      ],
+      res: [
+        path.resolve(basePath, 'assets'),
+        path.resolve(basePath, 'res'),
+        path.resolve(basePath, 'src/assets')
+      ]
+    };
+  }
+
   // 2.4.x版本的可能路径
-  const paths24x = {
-    // 2.4.x 主要检查build目录下的文件
-    settings: [
-      path.resolve(sourcePath, 'main.js'),
-      path.resolve(sourcePath, 'settings.js'),
-      path.resolve(sourcePath, 'src/settings.js')
-    ],
-    project: [
-      path.resolve(sourcePath, 'project.js'),
-      path.resolve(sourcePath, 'main.js'),
-      path.resolve(sourcePath, 'src/project.js')
-    ],
-    res: [
-      path.resolve(sourcePath, 'assets'),
-      path.resolve(sourcePath, 'res'),
-      path.resolve(sourcePath, 'src/assets')
-    ]
-  };
+  const paths24x = buildPaths(normalizedSourcePath);
+  if (sourceBasename === 'assets' || sourceBasename === 'res') {
+    paths24x.res = [normalizedSourcePath, ...paths24x.res];
+  }
 
   // 2.3.x及以下版本的路径
   const paths23x = {
-    settings: [path.resolve(sourcePath, 'src/settings.js')],
-    project: [path.resolve(sourcePath, 'src/project.js')],
-    res: [path.resolve(sourcePath, 'res')]
+    settings: [path.resolve(normalizedSourcePath, 'src/settings.js')],
+    project: [path.resolve(normalizedSourcePath, 'src/project.js')],
+    res: [path.resolve(normalizedSourcePath, 'res')]
   };
 
   // 检测文件存在性并确定版本
@@ -168,33 +187,46 @@ function detectProjectVersion(sourcePath, versionHint) {
   }
 
   // 自动检测：先尝试2.3.x路径（更精确的检测）
-  const settings23 = findExistingPath(paths23x.settings);
-  const project23 = findExistingPath(paths23x.project);
-  const res23 = findExistingPath(paths23x.res);
-
-  if (settings23 && project23 && res23) {
-    logger.info('自动检测到Cocos Creator 2.3.x或更早版本项目结构');
-    return {
-      version: '2.3.x',
-      settingsPath: settings23,
-      projectPath: project23,
-      resPath: res23
+  for (const root of uniqueCandidateRoots) {
+    const paths = {
+      settings: [path.resolve(root, 'src/settings.js')],
+      project: [path.resolve(root, 'src/project.js')],
+      res: [path.resolve(root, 'res')]
     };
+    const settings23 = findExistingPath(paths.settings);
+    const project23 = findExistingPath(paths.project);
+    const res23 = findExistingPath(paths.res);
+
+    if (settings23 && project23 && res23) {
+      logger.info('自动检测到Cocos Creator 2.3.x或更早版本项目结构');
+      return {
+        version: '2.3.x',
+        settingsPath: settings23,
+        projectPath: project23,
+        resPath: res23
+      };
+    }
   }
 
   // 再尝试2.4.x路径
-  const settings24 = findExistingPath(paths24x.settings);
-  const project24 = findExistingPath(paths24x.project);
-  const res24 = findExistingPath(paths24x.res);
+  for (const root of uniqueCandidateRoots) {
+    const paths = buildPaths(root);
+    if (sourceBasename === 'assets' || sourceBasename === 'res') {
+      paths.res = [normalizedSourcePath, ...paths.res];
+    }
+    const settings24 = findExistingPath(paths.settings);
+    const project24 = findExistingPath(paths.project);
+    const res24 = findExistingPath(paths.res);
 
-  if (settings24 && project24 && res24) {
-    logger.info('自动检测到Cocos Creator 2.4.x项目结构');
-    return {
-      version: '2.4.x',
-      settingsPath: settings24,
-      projectPath: project24,
-      resPath: res24
-    };
+    if (settings24 && project24 && res24) {
+      logger.info('自动检测到Cocos Creator 2.4.x项目结构');
+      return {
+        version: '2.4.x',
+        settingsPath: settings24,
+        projectPath: project24,
+        resPath: res24
+      };
+    }
   }
 
   // 如果都找不到，抛出详细错误信息
@@ -269,4 +301,4 @@ function parseSettings(settings) {
   }
 }
 
-module.exports = { reverseProject }; 
+module.exports = { reverseProject, detectProjectVersion };
