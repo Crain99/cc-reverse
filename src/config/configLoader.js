@@ -30,7 +30,8 @@ const defaultConfig = {
         extractTextures: true,
         extractAudio: true,
         extractAnimations: true,
-        optimizeSprites: false
+        optimizeSprites: false,
+        spriteOutputMode: "single" // "single" or "atlas"
     },
     
     // 高级配置
