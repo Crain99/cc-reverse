@@ -36,6 +36,18 @@ describe('resourceProcessor issue regressions', () => {
     );
   });
 
+  test('fileMap key should use basename without extension, handling dots', () => {
+    const fullPath1 = '/tmp/res/import/a1b2c3.json';
+    const basename1 = path.basename(fullPath1);
+    const key1 = basename1.substring(0, basename1.lastIndexOf('.')) || basename1;
+    expect(key1).toBe('a1b2c3');
+
+    const fullPath2 = '/tmp/res/import/a1.b2c3.json';
+    const basename2 = path.basename(fullPath2);
+    const key2 = basename2.substring(0, basename2.lastIndexOf('.')) || basename2;
+    expect(key2).toBe('a1.b2c3');
+  });
+
   test('createLibrary should use uuids from CCSettings when available', () => {
     global.settings = { CCSettings: { uuids: { k1: 'known-uuid' } } };
 

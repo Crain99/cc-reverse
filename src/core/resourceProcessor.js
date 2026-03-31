@@ -95,7 +95,9 @@ const resourceProcessor = {
                 
                 if (status.isFile()) {
                     this.fileList.push(fullPath);
-                    this.fileMap.set(path.basename(fullPath.split('.')[0]), fullPath);
+                    const basename = path.basename(fullPath);
+                    const key = basename.substring(0, basename.lastIndexOf('.')) || basename;
+                    this.fileMap.set(key, fullPath);
                 } else {
                     await this.readFiles(fullPath, false);
                 }
