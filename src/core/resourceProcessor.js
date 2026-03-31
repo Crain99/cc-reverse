@@ -32,6 +32,9 @@ const resourceProcessor = {
     audio: [],
     animation: [],
 
+    // 类型处理器注册表
+    typeHandlers: new Map(),
+
     /**
      * 获取 Cocos 配置对象
      * @returns {Object}
@@ -77,6 +80,28 @@ const resourceProcessor = {
         this.spriteFrames = {};
         this.audio = [];
         this.animation = [];
+        this.initHandlers();
+    },
+
+    /**
+     * 注册类型处理器
+     * @param {string} type 类型名称
+     * @param {Function} handler 处理函数 (data, key, context) => void
+     */
+    registerHandler(type, handler) {
+        this.typeHandlers.set(type, handler);
+    },
+
+    /**
+     * 初始化默认类型处理器
+     */
+    initHandlers() {
+        this.typeHandlers = new Map();
+        this.registerHandler('cc.SceneAsset', (data, key, ctx) => this.processSceneAsset(ctx.parentData, ctx.index, key));
+        this.registerHandler('cc.SpriteFrame', (data, key, ctx) => this.processSpriteFrame(ctx.parentData, ctx.index, key));
+        this.registerHandler('cc.AudioClip', (data, key) => this.processAudioClip(data, key));
+        this.registerHandler('cc.TextAsset', (data, key) => this.processTextAsset(data, key));
+        this.registerHandler('cc.AnimationClip', (data, key) => this.processAnimationClip(data, key));
     },
     
     /**
@@ -202,24 +227,23 @@ const resourceProcessor = {
      * @param {string} key 键名
      */
     writeProcessedData(data, key) {
-        if (!data || typeof data !== "object") {
+        if (!data || typeof data !== "object") return;
+
+        if (data["__type__"]) {
+            const handler = this.typeHandlers.get(data["__type__"]);
+            if (handler) handler(data, key, { parentData: data, index: null });
             return;
         }
 
-        if (typeof data === "object" && data["__type__"]) {
-            this.processTypeData(data, key);
-        } else {
-            for (let i in data) {
-                const item = data[i];
-                if (!item || typeof item !== "object") {
-                    continue;
-                }
-                const type = item['__type__'];
-                if (Array.isArray(item)) {
-                    this.writeProcessedData(item, key);
-                } else if (type) {
-                    this.processTypeObject(type, data, i, key);
-                }
+        for (const i in data) {
+            const item = data[i];
+            if (!item || typeof item !== "object") continue;
+
+            if (Array.isArray(item)) {
+                this.writeProcessedData(item, key);
+            } else if (item['__type__']) {
+                const handler = this.typeHandlers.get(item['__type__']);
+                if (handler) handler(item, key, { parentData: data, index: i });
             }
         }
     },

@@ -77,4 +77,27 @@ describe('resourceProcessor issue regressions', () => {
 
     expect(result).toBe('known-uuid');
   });
+
+  test('type handler registry should route to correct handler', () => {
+    resourceProcessor.resetState();
+
+    const mockHandler = jest.fn();
+    resourceProcessor.registerHandler('cc.TestType', mockHandler);
+
+    const data = { '0': { __type__: 'cc.TestType', _name: 'test' } };
+    resourceProcessor.writeProcessedData(data, 'testkey');
+
+    expect(mockHandler).toHaveBeenCalledWith(
+      { __type__: 'cc.TestType', _name: 'test' },
+      'testkey',
+      expect.objectContaining({ parentData: data, index: '0' })
+    );
+  });
+
+  test('unknown type should be silently skipped', () => {
+    resourceProcessor.resetState();
+
+    const data = { '0': { __type__: 'cc.UnknownType', _name: 'test' } };
+    expect(() => resourceProcessor.writeProcessedData(data, 'testkey')).not.toThrow();
+  });
 });
