@@ -124,7 +124,8 @@ module.exports = {
     extractTextures: true,
     extractAudio: true,
     extractAnimations: true,
-    optimizeSprites: false
+    optimizeSprites: false,
+    spriteOutputMode: "single" // "single"（逐张导出）或 "atlas"（图集模式）
   }
 }
 ```
