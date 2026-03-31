@@ -18,6 +18,8 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - 提取并转换游戏脚本和资源文件
 - 处理 UUID 和元数据信息
 - 支持场景、预制体、动画等资源的提取
+- **支持 Spine 骨骼动画资源提取**（骨骼数据 + Atlas 图集 + 纹理）
+- **支持 DragonBones 骨骼动画资源提取**（骨骼数据 + 图集 + 纹理）
 - 生成符合 Cocos Creator 格式要求的项目文件
 - **支持 Cocos Creator 2.3.x 和 2.4.x 版本自动检测**
 
@@ -126,6 +128,19 @@ module.exports = {
   }
 }
 ```
+
+## 支持的资源类型
+
+| 资源类型 | 说明 | 输出格式 |
+|---------|------|---------|
+| 场景 (cc.SceneAsset) | 游戏场景文件 | `.fire` |
+| 精灵帧 (cc.SpriteFrame) | 精灵图集帧数据 | PLIST + PNG |
+| 音频 (cc.AudioClip) | 音频资源 | 原始格式 |
+| 动画 (cc.AnimationClip) | 动画剪辑 | `.anim` |
+| 文本 (cc.TextAsset) | JSON 文本资源 | `.json` |
+| Spine 骨骼 (sp.SkeletonData) | Spine 骨骼动画 | `.json` + `.atlas` + `.png` |
+| DragonBones 骨骼 (dragonBones.DragonBonesAsset) | 龙骨骨骼数据 | `_ske.json` |
+| DragonBones 图集 (dragonBones.DragonBonesAtlasAsset) | 龙骨图集数据 | `_tex.json` + `_tex.png` |
 
 ## 注意事项
 
