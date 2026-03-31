@@ -80,6 +80,16 @@ const resourceProcessor = {
     },
     
     /**
+     * 从文件路径中提取不含扩展名的键名
+     * @param {string} filePath 文件路径
+     * @returns {string} 键名
+     */
+    getKeyFromPath(filePath) {
+        const basename = path.basename(filePath);
+        return basename.substring(0, basename.lastIndexOf('.')) || basename;
+    },
+
+    /**
      * 递归读取目录下所有文件
      * @param {string} filePath 文件路径
      * @param {boolean} first 是否为首次调用
@@ -95,9 +105,7 @@ const resourceProcessor = {
                 
                 if (status.isFile()) {
                     this.fileList.push(fullPath);
-                    const basename = path.basename(fullPath);
-                    const key = basename.substring(0, basename.lastIndexOf('.')) || basename;
-                    this.fileMap.set(key, fullPath);
+                    this.fileMap.set(this.getKeyFromPath(fullPath), fullPath);
                 } else {
                     await this.readFiles(fullPath, false);
                 }
@@ -140,7 +148,7 @@ const resourceProcessor = {
             if (path.extname(currPath) === '.json') {
                 try {
                     const currFile = await readFile(currPath);
-                    let key = path.basename(currPath).split('.')[0];
+                    let key = this.getKeyFromPath(currPath);
                     const data = JSON.parse(currFile);
                     this.nodeData[key] = data;
                     await this.processData(key, data);
@@ -334,6 +342,7 @@ const resourceProcessor = {
      * @param {string} key 键名
      */
     processSceneAsset(data, index, key) {
+        if (!Array.isArray(data) || data.length === 0 || !data[0]) return;
         const filename = data[0]['_name'] + '.fire';
         const _mkdir = 'Scene';
         
@@ -343,7 +352,7 @@ const resourceProcessor = {
         for (let dataKey in this.nodeData) {
             const nodeDataEntry = this.nodeData[dataKey];
             for (let j in nodeDataEntry) {
-                if (Array.isArray(nodeDataEntry[j])) {
+                if (Array.isArray(nodeDataEntry[j]) && nodeDataEntry[j].length > 0 && nodeDataEntry[j][0]) {
                     if (nodeDataEntry[j][0]["_name"] == data[0]["_name"]) {
                         const uuid = uuidUtils.decodeUuid(this.createLibrary(j, dataKey));
                         const metaData = {
