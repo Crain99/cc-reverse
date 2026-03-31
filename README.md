@@ -138,9 +138,9 @@ module.exports = {
 | 音频 (cc.AudioClip) | 音频资源 | 原始格式 |
 | 动画 (cc.AnimationClip) | 动画剪辑 | `.anim` |
 | 文本 (cc.TextAsset) | JSON 文本资源 | `.json` |
-| Spine 骨骼 (sp.SkeletonData) | Spine 骨骼动画 | `.json` + `.atlas` + `.png` |
-| DragonBones 骨骼 (dragonBones.DragonBonesAsset) | 龙骨骨骼数据 | `_ske.json` |
-| DragonBones 图集 (dragonBones.DragonBonesAtlasAsset) | 龙骨图集数据 | `_tex.json` + `_tex.png` |
+| Spine 骨骼 (sp.SkeletonData) | Spine 骨骼动画 **新增** | `.json` + `.atlas` + `.png` |
+| DragonBones 骨骼 (dragonBones.DragonBonesAsset) | 龙骨骨骼数据 **新增** | `_ske.json` |
+| DragonBones 图集 (dragonBones.DragonBonesAtlasAsset) | 龙骨图集数据 **新增** | `_tex.json` + `_tex.png` |
 
 ## 注意事项
 
