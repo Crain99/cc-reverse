@@ -251,59 +251,6 @@ const resourceProcessor = {
         }
     },
     
-    /**
-     * 处理特定类型的数据
-     * @param {Object} data 数据对象
-     * @param {string} key 键名
-     */
-    processTypeData(data, key) {
-        const type = data["__type__"];
-
-        if (type) {
-            if (type === "cc.AudioClip") {
-                this.processAudioClip(data, key);
-            } else if (type === "cc.TextAsset") {
-                this.processTextAsset(data, key);
-            } else if (type === "cc.AnimationClip") {
-                this.processAnimationClip(data, key);
-            } else if (type === "sp.SkeletonData") {
-                this.processSpineSkeletonData(data, key);
-            } else if (type === "dragonBones.DragonBonesAsset") {
-                this.processDragonBonesAsset(data, key);
-            } else if (type === "dragonBones.DragonBonesAtlasAsset") {
-                this.processDragonBonesAtlasAsset(data, key);
-            }
-        }
-    },
-    
-    /**
-     * 处理特定类型的对象
-     * @param {string} type 对象类型
-     * @param {Object} data 数据对象
-     * @param {string} index 索引
-     * @param {string} key 键名
-     */
-    processTypeObject(type, data, index, key) {
-        if (type === 'cc.SceneAsset') {
-            this.processSceneAsset(data, index, key);
-        } else if (type === 'cc.SpriteFrame') {
-            this.processSpriteFrame(data, index, key);
-        } else if (type === 'cc.AudioClip') {
-            this.processAudioClip(data[index], key);
-        } else if (type === 'cc.TextAsset') {
-            this.processTextAsset(data[index], key);
-        } else if (type === 'cc.AnimationClip') {
-            this.processAnimationClip(data[index], key);
-        } else if (type === 'sp.SkeletonData') {
-            this.processSpineSkeletonData(data[index], key);
-        }
-        else if (type === 'dragonBones.DragonBonesAsset') {
-            this.processDragonBonesAsset(data[index], key);
-        } else if (type === 'dragonBones.DragonBonesAtlasAsset') {
-            this.processDragonBonesAtlasAsset(data[index], key);
-        }
-        // 其他类型的处理可以在这里添加
-    },
     
     /**
      * 处理音频资源
