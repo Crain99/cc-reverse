@@ -142,7 +142,7 @@ const resourceProcessor = {
                     const currFile = await readFile(currPath);
                     let key = path.basename(currPath).split('.')[0];
                     const data = JSON.parse(currFile);
-                    this.nodeData = data;
+                    this.nodeData[key] = data;
                     await this.processData(key, data);
                 } catch (err) {
                     logger.error(`处理 JSON 文件 ${currPath} 时出错:`, err);
@@ -340,19 +340,22 @@ const resourceProcessor = {
         this.sceneAssets.push(JSON.stringify(data));
         fileManager.writeFile(_mkdir, filename, data);
         
-        for (let j in this.nodeData) {
-            if (Array.isArray(this.nodeData[j])) {
-                if (this.nodeData[j][0]["_name"] == data[0]["_name"]) {
-                    const uuid = uuidUtils.decodeUuid(this.createLibrary(j, key));
-                    const metaData = {
-                        "ver": "1.2.7",
-                        "uuid": uuid,
-                        "optimizationPolicy": "AUTO",
-                        "asyncLoadAssets": false,
-                        "readonly": false,
-                        "subMetas": {}
-                    };
-                    fileManager.writeFile(_mkdir, filename + ".meta", metaData);
+        for (let dataKey in this.nodeData) {
+            const nodeDataEntry = this.nodeData[dataKey];
+            for (let j in nodeDataEntry) {
+                if (Array.isArray(nodeDataEntry[j])) {
+                    if (nodeDataEntry[j][0]["_name"] == data[0]["_name"]) {
+                        const uuid = uuidUtils.decodeUuid(this.createLibrary(j, dataKey));
+                        const metaData = {
+                            "ver": "1.2.7",
+                            "uuid": uuid,
+                            "optimizationPolicy": "AUTO",
+                            "asyncLoadAssets": false,
+                            "readonly": false,
+                            "subMetas": {}
+                        };
+                        fileManager.writeFile(_mkdir, filename + ".meta", metaData);
+                    }
                 }
             }
         }

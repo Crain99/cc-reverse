@@ -48,6 +48,28 @@ describe('resourceProcessor issue regressions', () => {
     expect(key2).toBe('a1.b2c3');
   });
 
+  test('processJsonFiles should accumulate nodeData per key, not overwrite', async () => {
+    resourceProcessor.resetState();
+    resourceProcessor.fileList = ['/tmp/res/aaa.json', '/tmp/res/bbb.json'];
+
+    // Write temporary JSON files so readFile can actually read them
+    const tmpDir = '/tmp/res';
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync('/tmp/res/aaa.json', JSON.stringify({ type: 'first' }));
+    fs.writeFileSync('/tmp/res/bbb.json', JSON.stringify({ type: 'second' }));
+
+    jest.spyOn(resourceProcessor, 'processData').mockResolvedValue();
+
+    await resourceProcessor.processJsonFiles();
+
+    expect(resourceProcessor.nodeData['aaa']).toEqual({ type: 'first' });
+    expect(resourceProcessor.nodeData['bbb']).toEqual({ type: 'second' });
+
+    // Cleanup
+    fs.unlinkSync('/tmp/res/aaa.json');
+    fs.unlinkSync('/tmp/res/bbb.json');
+  });
+
   test('createLibrary should use uuids from CCSettings when available', () => {
     global.settings = { CCSettings: { uuids: { k1: 'known-uuid' } } };
 
