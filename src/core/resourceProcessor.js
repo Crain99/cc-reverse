@@ -220,8 +220,128 @@ const resourceProcessor = {
      * @returns {Promise<Object>} 解析后的对象
      */
     async revealData(jsonObject) {
-        // 这里可以添加数据解析逻辑
+        if (!jsonObject || typeof jsonObject !== 'object') return jsonObject;
+
+        if (Array.isArray(jsonObject)) {
+            return this.restoreCompressedData(jsonObject);
+        }
+
+        // Plain format object: just resolve references and decode UUIDs
+        this.decodeUuids(jsonObject);
         return jsonObject;
+    },
+
+    isCompressedFormat(data) {
+        if (!Array.isArray(data) || data.length < 2) return false;
+        const header = data[0];
+        return Array.isArray(header) && header.length > 0 && typeof header[0] === 'string';
+    },
+
+    restoreCompressedData(data) {
+        if (!this.isCompressedFormat(data)) {
+            this.resolveReferences(data);
+            this.decodeUuids(data);
+            return data;
+        }
+
+        const { typeDefinitions } = require('./typeDefinitions');
+        const typeList = data[0];
+        const result = [typeList];
+
+        for (let i = 1; i < data.length; i++) {
+            const item = data[i];
+            if (Array.isArray(item) && item.length > 0 && typeof item[0] === 'number') {
+                const typeIndex = item[0];
+                const typeName = typeList[typeIndex];
+                if (typeName) {
+                    const obj = this.arrayToObject(typeName, item.slice(1), typeDefinitions);
+                    result.push(obj);
+                } else {
+                    result.push(item);
+                }
+            } else if (typeof item === 'object' && item !== null) {
+                result.push(item);
+            } else {
+                result.push(item);
+            }
+        }
+
+        this.resolveReferences(result);
+        this.decodeUuids(result);
+        return result;
+    },
+
+    arrayToObject(typeName, values, typeDefinitions) {
+        const settings = this.getCCSettings();
+        let properties = null;
+
+        if (settings && settings.types && settings.types[typeName]) {
+            properties = settings.types[typeName];
+        }
+
+        if (!properties) {
+            properties = typeDefinitions.getProperties(typeName);
+        }
+
+        if (!properties) {
+            return { __type__: typeName, _values: values };
+        }
+
+        const obj = { __type__: typeName };
+        for (let i = 0; i < values.length && i < properties.length; i++) {
+            obj[properties[i]] = values[i];
+        }
+        return obj;
+    },
+
+    resolveReferences(data) {
+        if (!Array.isArray(data)) return;
+
+        const resolve = (obj) => {
+            if (!obj || typeof obj !== 'object') return;
+            for (const key in obj) {
+                const val = obj[key];
+                if (val && typeof val === 'object') {
+                    if (val.__id__ !== undefined && data[val.__id__] !== undefined) {
+                        obj[key] = data[val.__id__];
+                    } else if (Array.isArray(val)) {
+                        for (let i = 0; i < val.length; i++) {
+                            if (val[i] && val[i].__id__ !== undefined && data[val[i].__id__] !== undefined) {
+                                val[i] = data[val[i].__id__];
+                            }
+                        }
+                    } else {
+                        resolve(val);
+                    }
+                }
+            }
+        };
+
+        for (let i = 0; i < data.length; i++) {
+            if (typeof data[i] === 'object' && data[i] !== null) {
+                resolve(data[i]);
+            }
+        }
+    },
+
+    decodeUuids(data) {
+        const walk = (obj) => {
+            if (!obj || typeof obj !== 'object') return;
+            if (obj.__uuid__ && typeof obj.__uuid__ === 'string' && obj.__uuid__.length === 22) {
+                obj.__uuid__ = uuidUtils.decodeUuid(obj.__uuid__);
+            }
+            for (const key in obj) {
+                if (typeof obj[key] === 'object' && obj[key] !== null) {
+                    walk(obj[key]);
+                }
+            }
+        };
+
+        if (Array.isArray(data)) {
+            data.forEach(item => walk(item));
+        } else {
+            walk(data);
+        }
     },
     
     /**

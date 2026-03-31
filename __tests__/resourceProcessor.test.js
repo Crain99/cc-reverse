@@ -164,6 +164,62 @@ describe('resourceProcessor issue regressions', () => {
     );
   });
 
+  describe('revealData', () => {
+    test('should pass through plain format data unchanged', async () => {
+      resourceProcessor.resetState();
+      const plainData = {
+        __type__: 'cc.AudioClip',
+        _name: 'bgm',
+        _native: '.mp3'
+      };
+      const result = await resourceProcessor.revealData(plainData);
+      expect(result.__type__).toBe('cc.AudioClip');
+      expect(result._name).toBe('bgm');
+    });
+
+    test('should restore compressed array format to object format', async () => {
+      resourceProcessor.resetState();
+      const compressedData = [
+        ['cc.AudioClip'],
+        [0, 'bgm', 0, '.mp3', 5.2, 0]
+      ];
+      const result = await resourceProcessor.revealData(compressedData);
+      expect(result[1]).toBeDefined();
+      expect(result[1]['__type__']).toBe('cc.AudioClip');
+      expect(result[1]['_name']).toBe('bgm');
+    });
+
+    test('should resolve __id__ references', async () => {
+      resourceProcessor.resetState();
+      const dataWithRefs = [
+        { __type__: 'cc.Node', _name: 'root', _children: [{ __id__: 1 }] },
+        { __type__: 'cc.Node', _name: 'child' }
+      ];
+      const result = await resourceProcessor.revealData(dataWithRefs);
+      expect(result[0]._children[0]).toBe(result[1]);
+    });
+
+    test('should decode compressed UUIDs in __uuid__ fields', async () => {
+      resourceProcessor.resetState();
+      const dataWithUuid = {
+        __type__: 'cc.Sprite',
+        _spriteFrame: { __uuid__: 'fcmR3XADNLgJ1ByKhqcC5Z' }
+      };
+      const result = await resourceProcessor.revealData(dataWithUuid);
+      expect(result._spriteFrame.__uuid__).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    test('should handle non-compressed arrays by resolving refs and UUIDs', async () => {
+      resourceProcessor.resetState();
+      const data = [
+        { __type__: 'cc.Node', _name: 'a', _ref: { __id__: 1 } },
+        { __type__: 'cc.Node', _name: 'b' }
+      ];
+      const result = await resourceProcessor.revealData(data);
+      expect(result[0]._ref).toBe(result[1]);
+    });
+  });
+
   test('dragonBones.DragonBonesAtlasAsset handler should extract atlas and queue texture', () => {
     resourceProcessor.resetState();
     global.paths = { res: '/tmp/assets', output: '/tmp/output' };
