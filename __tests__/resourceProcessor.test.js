@@ -220,6 +220,78 @@ describe('resourceProcessor issue regressions', () => {
     });
   });
 
+  test('processSpriteFrame single mode should queue texture and write meta', () => {
+    resourceProcessor.resetState();
+    global.paths = { res: '/tmp/assets', output: '/tmp/output' };
+    global.config = { assets: { spriteOutputMode: 'single' } };
+
+    resourceProcessor.fileMap.set('tex-001', '/tmp/res/import/tex-001.png');
+
+    const spriteData = {
+      __type__: 'cc.SpriteFrame',
+      _name: 'icon_star',
+      _rect: { x: 10, y: 20, width: 64, height: 64 },
+      _offset: { x: 0, y: 0 },
+      _originalSize: { width: 64, height: 64 },
+      _rotated: false,
+      _texture: { __uuid__: 'tex-001' }
+    };
+
+    const writeFileSpy = jest.spyOn(
+      require('../src/utils/fileManager').fileManager, 'writeFile'
+    ).mockResolvedValue();
+
+    resourceProcessor.processSpriteFrame({ '0': spriteData }, '0', 'frame-uuid');
+
+    // Should store in spriteFrames
+    expect(resourceProcessor.spriteFrames['frame-uuid']).toBeDefined();
+
+    // Should queue texture for copy
+    expect(resourceProcessor.cacheReadList).toContain('/tmp/res/import/tex-001.png');
+
+    // Should write meta with subMetas
+    expect(writeFileSpy).toHaveBeenCalledWith(
+      'Texture',
+      'icon_star.png.meta',
+      expect.objectContaining({
+        ver: '1.2.7',
+        subMetas: expect.objectContaining({
+          icon_star: expect.objectContaining({
+            uuid: 'frame-uuid',
+            width: 64,
+            height: 64
+          })
+        })
+      })
+    );
+  });
+
+  test('processSpriteFrame should fallback to key-based fileMap lookup', () => {
+    resourceProcessor.resetState();
+    global.paths = { res: '/tmp/assets', output: '/tmp/output' };
+    global.config = { assets: { spriteOutputMode: 'single' } };
+
+    // No _texture reference, but fileMap has the key
+    resourceProcessor.fileMap.set('frame-key', '/tmp/res/import/frame-key.png');
+
+    const spriteData = {
+      __type__: 'cc.SpriteFrame',
+      _name: 'btn_bg',
+      _rect: { x: 0, y: 0, width: 200, height: 80 },
+      _offset: { x: 0, y: 0 },
+      _originalSize: { width: 200, height: 80 },
+      _rotated: false
+    };
+
+    jest.spyOn(
+      require('../src/utils/fileManager').fileManager, 'writeFile'
+    ).mockResolvedValue();
+
+    resourceProcessor.processSpriteFrame({ '0': spriteData }, '0', 'frame-key');
+
+    expect(resourceProcessor.cacheReadList).toContain('/tmp/res/import/frame-key.png');
+  });
+
   test('dragonBones.DragonBonesAtlasAsset handler should extract atlas and queue texture', () => {
     resourceProcessor.resetState();
     global.paths = { res: '/tmp/assets', output: '/tmp/output' };

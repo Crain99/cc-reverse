@@ -490,8 +490,74 @@ const resourceProcessor = {
      * @param {string} key 键名
      */
     processSpriteFrame(data, index, key) {
-        // 精灵帧处理逻辑
-        this.spriteFrames[key] = data;
+        const spriteData = data[index] || data;
+        const name = spriteData['_name'] || key;
+        this.spriteFrames[key] = spriteData;
+
+        const outputMode = (global.config && global.config.assets && global.config.assets.spriteOutputMode) || 'single';
+
+        if (outputMode === 'single') {
+            this.processSpriteFrameSingle(spriteData, name, key);
+        }
+        // Atlas mode is handled in convertToOutputFiles via convertSpriteAtlas
+    },
+
+    processSpriteFrameSingle(spriteData, name, key) {
+        const _mkdir = 'Texture';
+
+        // Find texture UUID from sprite data
+        let texUuid = null;
+        if (spriteData.content && spriteData.content.atlas) {
+            texUuid = spriteData.content.atlas['__uuid__'] || spriteData.content.atlas;
+        } else if (spriteData._texture) {
+            texUuid = spriteData._texture['__uuid__'] || spriteData._texture;
+        }
+
+        // Queue texture file for copy if found
+        if (texUuid && this.fileMap.has(texUuid)) {
+            this.cacheReadList.push(this.fileMap.get(texUuid));
+            this.cacheWriteList.push(path.join(global.paths.output, 'assets', _mkdir, name + '.png'));
+            this.fileMap.delete(texUuid);
+        } else if (this.fileMap.has(key)) {
+            this.cacheReadList.push(this.fileMap.get(key));
+            this.cacheWriteList.push(path.join(global.paths.output, 'assets', _mkdir, name + '.png'));
+            this.fileMap.delete(key);
+        }
+
+        // Build subMetas for the sprite frame
+        const subMetas = {};
+        subMetas[name] = {
+            "ver": "1.0.4",
+            "uuid": key,
+            "rawTextureUuid": texUuid || key,
+            "trimType": "auto",
+            "trimThreshold": 1,
+            "rotated": spriteData['_rotated'] || false,
+            "offsetX": spriteData['_offset'] ? spriteData['_offset'].x || 0 : 0,
+            "offsetY": spriteData['_offset'] ? spriteData['_offset'].y || 0 : 0,
+            "trimX": spriteData['_rect'] ? spriteData['_rect'].x || 0 : 0,
+            "trimY": spriteData['_rect'] ? spriteData['_rect'].y || 0 : 0,
+            "width": spriteData['_rect'] ? spriteData['_rect'].width || 0 : 0,
+            "height": spriteData['_rect'] ? spriteData['_rect'].height || 0 : 0,
+            "rawWidth": spriteData['_originalSize'] ? spriteData['_originalSize'].width || 0 : 0,
+            "rawHeight": spriteData['_originalSize'] ? spriteData['_originalSize'].height || 0 : 0,
+            "borderTop": 0,
+            "borderBottom": 0,
+            "borderLeft": 0,
+            "borderRight": 0,
+            "subMetas": {}
+        };
+
+        // Write meta file
+        const metaData = {
+            "ver": "1.2.7",
+            "uuid": texUuid || key,
+            "optimizationPolicy": "AUTO",
+            "asyncLoadAssets": false,
+            "readonly": false,
+            "subMetas": subMetas
+        };
+        fileManager.writeFile(_mkdir, name + '.png.meta', metaData);
     },
     
     /**
