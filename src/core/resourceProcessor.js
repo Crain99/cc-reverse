@@ -102,6 +102,7 @@ const resourceProcessor = {
         this.registerHandler('cc.AudioClip', (data, key) => this.processAudioClip(data, key));
         this.registerHandler('cc.TextAsset', (data, key) => this.processTextAsset(data, key));
         this.registerHandler('cc.AnimationClip', (data, key) => this.processAnimationClip(data, key));
+        this.registerHandler('sp.SkeletonData', (data, key) => this.processSpineSkeletonData(data, key));
     },
     
     /**
@@ -255,7 +256,7 @@ const resourceProcessor = {
      */
     processTypeData(data, key) {
         const type = data["__type__"];
-        
+
         if (type) {
             if (type === "cc.AudioClip") {
                 this.processAudioClip(data, key);
@@ -263,6 +264,8 @@ const resourceProcessor = {
                 this.processTextAsset(data, key);
             } else if (type === "cc.AnimationClip") {
                 this.processAnimationClip(data, key);
+            } else if (type === "sp.SkeletonData") {
+                this.processSpineSkeletonData(data, key);
             }
         }
     },
@@ -279,6 +282,14 @@ const resourceProcessor = {
             this.processSceneAsset(data, index, key);
         } else if (type === 'cc.SpriteFrame') {
             this.processSpriteFrame(data, index, key);
+        } else if (type === 'cc.AudioClip') {
+            this.processAudioClip(data[index], key);
+        } else if (type === 'cc.TextAsset') {
+            this.processTextAsset(data[index], key);
+        } else if (type === 'cc.AnimationClip') {
+            this.processAnimationClip(data[index], key);
+        } else if (type === 'sp.SkeletonData') {
+            this.processSpineSkeletonData(data[index], key);
         }
         // 其他类型的处理可以在这里添加
     },
@@ -433,6 +444,55 @@ const resourceProcessor = {
         logger.info(`处理了 ${this.cacheReadList.length} 个资源文件`);
     },
     
+    /**
+     * 处理 Spine 骨骼数据资源
+     * @param {Object} data Spine 数据
+     * @param {string} key 键名 (uuid)
+     */
+    processSpineSkeletonData(data, key) {
+        const name = data['_name'];
+        const _mkdir = 'Spine';
+        const uuid = key;
+
+        // 1. Write skeleton JSON data
+        if (data['_skeletonJson']) {
+            fileManager.writeFile(_mkdir, name + '.json', data['_skeletonJson']);
+        } else if (this.fileMap.has(uuid)) {
+            this.cacheReadList.push(this.fileMap.get(uuid));
+            this.cacheWriteList.push(path.join(global.paths.output, 'assets', _mkdir, name + (data['_native'] || '.json')));
+            this.fileMap.delete(uuid);
+        }
+
+        // 2. Write atlas text
+        if (data['_atlasText']) {
+            fileManager.writeFile(_mkdir, name + '.atlas', data['_atlasText']);
+        }
+
+        // 3. Queue texture files for copy
+        if (data['textures'] && Array.isArray(data['textures'])) {
+            data['textures'].forEach((tex, i) => {
+                const texUuid = tex['__uuid__'] || tex;
+                if (this.fileMap.has(texUuid)) {
+                    const ext = i === 0 ? '.png' : `_${i}.png`;
+                    this.cacheReadList.push(this.fileMap.get(texUuid));
+                    this.cacheWriteList.push(path.join(global.paths.output, 'assets', _mkdir, name + ext));
+                    this.fileMap.delete(texUuid);
+                }
+            });
+        }
+
+        // 4. Write meta file
+        const metaData = {
+            "ver": "1.2.7",
+            "uuid": uuid,
+            "optimizationPolicy": "AUTO",
+            "asyncLoadAssets": false,
+            "readonly": false,
+            "subMetas": {}
+        };
+        fileManager.writeFile(_mkdir, name + '.json.meta', metaData);
+    },
+
     /**
      * 复制文件
      * @returns {Promise<void>}

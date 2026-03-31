@@ -100,4 +100,43 @@ describe('resourceProcessor issue regressions', () => {
     const data = { '0': { __type__: 'cc.UnknownType', _name: 'test' } };
     expect(() => resourceProcessor.writeProcessedData(data, 'testkey')).not.toThrow();
   });
+
+  test('sp.SkeletonData handler should extract skeleton json, atlas, and queue textures', () => {
+    resourceProcessor.resetState();
+    global.paths = { res: '/tmp/assets', output: '/tmp/output' };
+
+    resourceProcessor.fileMap.set('tex-uuid', '/tmp/res/import/tex-uuid.png');
+
+    const spineData = {
+      __type__: 'sp.SkeletonData',
+      _name: 'hero_spine',
+      _native: '.json',
+      _skeletonJson: { bones: [], slots: [], skins: [] },
+      _atlasText: 'hero.png\nsize: 512,512\nformat: RGBA8888',
+      textures: [{ __uuid__: 'tex-uuid' }]
+    };
+
+    const writeFileSpy = jest.spyOn(
+      require('../src/utils/fileManager').fileManager, 'writeFile'
+    ).mockResolvedValue();
+
+    resourceProcessor.writeProcessedData({ '0': spineData }, 'skeleton-uuid');
+
+    expect(writeFileSpy).toHaveBeenCalledWith(
+      'Spine', 'hero_spine.json',
+      expect.objectContaining({ bones: [] })
+    );
+
+    expect(writeFileSpy).toHaveBeenCalledWith(
+      'Spine', 'hero_spine.atlas',
+      expect.stringContaining('hero.png')
+    );
+
+    expect(writeFileSpy).toHaveBeenCalledWith(
+      'Spine', 'hero_spine.json.meta',
+      expect.objectContaining({ uuid: 'skeleton-uuid' })
+    );
+
+    expect(resourceProcessor.cacheReadList).toContain('/tmp/res/import/tex-uuid.png');
+  });
 });
