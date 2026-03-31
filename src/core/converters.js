@@ -27,8 +27,66 @@ const converters = {
      */
     async convertSpriteAtlas(spriteFrames) {
         try {
-            // 转换逻辑
-            logger.info('处理精灵图集...');
+            const outputMode = (global.config && global.config.assets && global.config.assets.spriteOutputMode) || 'single';
+
+            if (outputMode !== 'atlas' || !spriteFrames || Object.keys(spriteFrames).length === 0) {
+                logger.info('精灵图集处理完成');
+                return;
+            }
+
+            // Group sprite frames by texture UUID
+            const atlasGroups = {};
+            for (const key in spriteFrames) {
+                const frame = spriteFrames[key];
+                let texUuid = 'default';
+                if (frame._texture) {
+                    texUuid = frame._texture['__uuid__'] || frame._texture || 'default';
+                } else if (frame.content && frame.content.atlas) {
+                    texUuid = frame.content.atlas['__uuid__'] || frame.content.atlas || 'default';
+                }
+                if (!atlasGroups[texUuid]) {
+                    atlasGroups[texUuid] = { frames: {}, name: null };
+                }
+                const frameName = frame['_name'] || key;
+                if (!atlasGroups[texUuid].name) {
+                    atlasGroups[texUuid].name = frameName;
+                }
+                atlasGroups[texUuid].frames[frameName] = {
+                    frame: {
+                        x: frame._rect ? frame._rect.x || 0 : 0,
+                        y: frame._rect ? frame._rect.y || 0 : 0,
+                        w: frame._rect ? frame._rect.width || 0 : 0,
+                        h: frame._rect ? frame._rect.height || 0 : 0
+                    },
+                    offset: {
+                        x: frame._offset ? frame._offset.x || 0 : 0,
+                        y: frame._offset ? frame._offset.y || 0 : 0
+                    },
+                    rotated: frame._rotated || false,
+                    sourceColorRect: {
+                        x: frame._rect ? frame._rect.x || 0 : 0,
+                        y: frame._rect ? frame._rect.y || 0 : 0,
+                        w: frame._rect ? frame._rect.width || 0 : 0,
+                        h: frame._rect ? frame._rect.height || 0 : 0
+                    },
+                    sourceSize: {
+                        w: frame._originalSize ? frame._originalSize.width || 0 : 0,
+                        h: frame._originalSize ? frame._originalSize.height || 0 : 0
+                    }
+                };
+            }
+
+            // Generate PLIST for each atlas group
+            for (const texUuid in atlasGroups) {
+                const group = atlasGroups[texUuid];
+                const atlasName = group.name || texUuid;
+
+                const plistData = { frames: group.frames };
+                const xml = this.createXmlDocument(plistData);
+                fileManager.writeFile('Texture', atlasName + '.plist', xml.toString());
+            }
+
+            logger.info(`生成了 ${Object.keys(atlasGroups).length} 个精灵图集`);
         } catch (err) {
             logger.error('转换精灵图集时出错:', err);
         }

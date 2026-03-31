@@ -292,6 +292,64 @@ describe('resourceProcessor issue regressions', () => {
     expect(resourceProcessor.cacheReadList).toContain('/tmp/res/import/frame-key.png');
   });
 
+  test('convertSpriteAtlas should generate PLIST in atlas mode', async () => {
+    const { converters } = require('../src/core/converters');
+
+    global.config = { assets: { spriteOutputMode: 'atlas' } };
+    global.paths = { output: '/tmp/output' };
+
+    const spriteFrames = {
+      'frame-1': {
+        _name: 'icon_a',
+        _rect: { x: 0, y: 0, width: 64, height: 64 },
+        _offset: { x: 0, y: 0 },
+        _originalSize: { width: 64, height: 64 },
+        _rotated: false,
+        _texture: { __uuid__: 'atlas-tex' }
+      },
+      'frame-2': {
+        _name: 'icon_b',
+        _rect: { x: 64, y: 0, width: 32, height: 32 },
+        _offset: { x: 0, y: 0 },
+        _originalSize: { width: 32, height: 32 },
+        _rotated: false,
+        _texture: { __uuid__: 'atlas-tex' }
+      }
+    };
+
+    const writeFileSpy = jest.spyOn(
+      require('../src/utils/fileManager').fileManager, 'writeFile'
+    ).mockResolvedValue();
+
+    await converters.convertSpriteAtlas(spriteFrames);
+
+    // Should write a plist file for the atlas group
+    expect(writeFileSpy).toHaveBeenCalledWith(
+      'Texture',
+      'icon_a.plist',
+      expect.stringContaining('plist')
+    );
+  });
+
+  test('convertSpriteAtlas should skip in single mode', async () => {
+    const { converters } = require('../src/core/converters');
+
+    global.config = { assets: { spriteOutputMode: 'single' } };
+
+    const writeFileSpy = jest.spyOn(
+      require('../src/utils/fileManager').fileManager, 'writeFile'
+    ).mockResolvedValue();
+
+    await converters.convertSpriteAtlas({ 'f': { _name: 'test' } });
+
+    // Should NOT write any plist in single mode
+    expect(writeFileSpy).not.toHaveBeenCalledWith(
+      'Texture',
+      expect.stringContaining('.plist'),
+      expect.anything()
+    );
+  });
+
   test('dragonBones.DragonBonesAtlasAsset handler should extract atlas and queue texture', () => {
     resourceProcessor.resetState();
     global.paths = { res: '/tmp/assets', output: '/tmp/output' };
