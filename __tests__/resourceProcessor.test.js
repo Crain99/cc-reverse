@@ -43,4 +43,55 @@ describe('resourceProcessor issue regressions', () => {
 
     expect(result).toBe('known-uuid');
   });
+
+  test('dragonBones.DragonBonesAsset handler should extract skeleton data', () => {
+    resourceProcessor.resetState();
+    global.paths = { res: '/tmp/assets', output: '/tmp/output' };
+
+    const dbData = {
+      __type__: 'dragonBones.DragonBonesAsset',
+      _name: 'dragon',
+      _native: '_ske.json',
+      _dragonBonesJson: '{"armature":[]}'
+    };
+
+    const writeFileSpy = jest.spyOn(
+      require('../src/utils/fileManager').fileManager, 'writeFile'
+    ).mockResolvedValue();
+
+    resourceProcessor.writeProcessedData({ '0': dbData }, 'db-uuid');
+
+    expect(writeFileSpy).toHaveBeenCalledWith('DragonBones', 'dragon_ske.json', '{"armature":[]}');
+    expect(writeFileSpy).toHaveBeenCalledWith(
+      'DragonBones', 'dragon_ske.json.meta',
+      expect.objectContaining({ uuid: 'db-uuid' })
+    );
+  });
+
+  test('dragonBones.DragonBonesAtlasAsset handler should extract atlas and queue texture', () => {
+    resourceProcessor.resetState();
+    global.paths = { res: '/tmp/assets', output: '/tmp/output' };
+
+    resourceProcessor.fileMap.set('dbtex-uuid', '/tmp/res/import/dbtex-uuid.png');
+
+    const dbAtlasData = {
+      __type__: 'dragonBones.DragonBonesAtlasAsset',
+      _name: 'dragon',
+      _native: '_tex.json',
+      _textureAtlasData: '{"imagePath":"dragon_tex.png"}',
+      _texture: { __uuid__: 'dbtex-uuid' }
+    };
+
+    const writeFileSpy = jest.spyOn(
+      require('../src/utils/fileManager').fileManager, 'writeFile'
+    ).mockResolvedValue();
+
+    resourceProcessor.writeProcessedData({ '0': dbAtlasData }, 'dbatlas-uuid');
+
+    expect(writeFileSpy).toHaveBeenCalledWith(
+      'DragonBones', 'dragon_tex.json',
+      expect.stringContaining('dragon_tex.png')
+    );
+    expect(resourceProcessor.cacheReadList).toContain('/tmp/res/import/dbtex-uuid.png');
+  });
 });

@@ -229,6 +229,10 @@ const resourceProcessor = {
                 this.processTextAsset(data, key);
             } else if (type === "cc.AnimationClip") {
                 this.processAnimationClip(data, key);
+            } else if (type === "dragonBones.DragonBonesAsset") {
+                this.processDragonBonesAsset(data, key);
+            } else if (type === "dragonBones.DragonBonesAtlasAsset") {
+                this.processDragonBonesAtlasAsset(data, key);
             }
         }
     },
@@ -245,6 +249,11 @@ const resourceProcessor = {
             this.processSceneAsset(data, index, key);
         } else if (type === 'cc.SpriteFrame') {
             this.processSpriteFrame(data, index, key);
+        }
+        else if (type === 'dragonBones.DragonBonesAsset') {
+            this.processDragonBonesAsset(data[index], key);
+        } else if (type === 'dragonBones.DragonBonesAtlasAsset') {
+            this.processDragonBonesAtlasAsset(data[index], key);
         }
         // 其他类型的处理可以在这里添加
     },
@@ -367,6 +376,74 @@ const resourceProcessor = {
         this.spriteFrames[key] = data;
     },
     
+    /**
+     * 处理 DragonBones 骨骼资源
+     * @param {Object} data 骨骼数据
+     * @param {string} key 键名
+     */
+    processDragonBonesAsset(data, key) {
+        const name = data['_name'];
+        const _mkdir = 'DragonBones';
+        const uuid = key;
+
+        if (data['_dragonBonesJson']) {
+            fileManager.writeFile(_mkdir, name + '_ske.json', data['_dragonBonesJson']);
+        } else if (this.fileMap.has(uuid)) {
+            this.cacheReadList.push(this.fileMap.get(uuid));
+            this.cacheWriteList.push(path.join(global.paths.output, 'assets', _mkdir, name + (data['_native'] || '_ske.json')));
+            this.fileMap.delete(uuid);
+        }
+
+        const metaData = {
+            "ver": "1.2.7",
+            "uuid": uuid,
+            "optimizationPolicy": "AUTO",
+            "asyncLoadAssets": false,
+            "readonly": false,
+            "subMetas": {}
+        };
+        fileManager.writeFile(_mkdir, name + '_ske.json.meta', metaData);
+    },
+
+    /**
+     * 处理 DragonBones 图集资源
+     * @param {Object} data 图集数据
+     * @param {string} key 键名
+     */
+    processDragonBonesAtlasAsset(data, key) {
+        const name = data['_name'];
+        const _mkdir = 'DragonBones';
+        const uuid = key;
+
+        if (data['_textureAtlasData']) {
+            fileManager.writeFile(_mkdir, name + '_tex.json', data['_textureAtlasData']);
+        } else if (this.fileMap.has(uuid)) {
+            this.cacheReadList.push(this.fileMap.get(uuid));
+            this.cacheWriteList.push(path.join(global.paths.output, 'assets', _mkdir, name + (data['_native'] || '_tex.json')));
+            this.fileMap.delete(uuid);
+        }
+
+        const texRef = data['_texture'];
+        if (texRef) {
+            const texUuid = texRef['__uuid__'] || texRef;
+            if (this.fileMap.has(texUuid)) {
+                this.cacheReadList.push(this.fileMap.get(texUuid));
+                this.cacheWriteList.push(path.join(global.paths.output, 'assets', _mkdir, name + '_tex.png'));
+                this.fileMap.delete(texUuid);
+            }
+        }
+
+        const metaData = {
+            "ver": "1.2.7",
+            "uuid": uuid,
+            "optimizationPolicy": "AUTO",
+            "asyncLoadAssets": false,
+            "readonly": false,
+            "subMetas": {}
+        };
+        fileManager.writeFile(_mkdir, name + '_tex.json.meta', metaData);
+    },
+
     /**
      * 创建库
      * @param {string} index 索引
