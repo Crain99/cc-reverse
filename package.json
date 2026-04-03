@@ -40,10 +40,12 @@
     "image-size": "^0.9.3",
     "imageinfo": "^1.0.4",
     "ora": "^5.4.1",
+    "pako": "^2.1.0",
     "progress": "^2.0.3",
     "string-random": "^0.1.3",
     "uuid": "^8.3.2",
-    "xml-writer": "^1.7.0"
+    "xml-writer": "^1.7.0",
+    "xxtea-node": "^1.1.5"
   },
   "engines": {
     "node": ">=14.0.0"
