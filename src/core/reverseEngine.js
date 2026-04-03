@@ -11,6 +11,7 @@ const { resourceProcessor } = require('./resourceProcessor');
 const { projectGenerator } = require('./projectGenerator');
 const { logger } = require('../utils/logger');
 const { loadConfig } = require('../config/configLoader');
+const { decryptProject, scanJscFiles, extractKeyFromProject } = require('./jscDecryptor');
 
 // 将异步文件操作转为 Promise
 const readFile = promisify(fs.readFile);
@@ -27,7 +28,7 @@ const mkdir = promisify(fs.mkdir);
  * @returns {Promise<void>}
  */
 async function reverseProject(options) {
-  const { sourcePath, outputPath, verbose = false, versionHint } = options;
+  const { sourcePath, outputPath, verbose = false, versionHint, key } = options;
   
   // 全局配置初始化
   global.config = loadConfig();
@@ -56,11 +57,36 @@ async function reverseProject(options) {
     ast: astPath
   };
 
+  // JSC 解密预处理
+  const jscFiles = scanJscFiles(sourcePath);
+  let codePath = sourcePath;
+  if (jscFiles.length > 0) {
+    const decryptKey = key || global.config.decrypt?.key || extractKeyFromProject(sourcePath);
+    if (decryptKey) {
+      const decryptOutputDir = path.resolve(tempPath, 'decrypted');
+      await mkdir(decryptOutputDir, { recursive: true });
+      logger.info('检测到 JSC 加密文件，开始解密...');
+      await decryptProject(sourcePath, decryptOutputDir, decryptKey);
+      codePath = decryptOutputDir;
+    } else {
+      logger.warn('发现 .jsc 文件但未提供密钥，请使用 --key 参数指定密钥');
+    }
+  }
+
   // 读取项目文件
   try {
     // 读取和解析设置
     const settings = await readFile(projectInfo.settingsPath);
-    const project = await readFile(projectInfo.projectPath);
+
+    // 如果有解密后的代码目录，优先使用解密后的文件
+    let projectFilePath = projectInfo.projectPath;
+    if (codePath !== sourcePath) {
+      const decryptedProjectFile = path.join(codePath, path.relative(sourcePath, projectInfo.projectPath).replace(/\.jsc$/, '.js'));
+      if (fs.existsSync(decryptedProjectFile)) {
+        projectFilePath = decryptedProjectFile;
+      }
+    }
+    const project = await readFile(projectFilePath);
     const code = project.toString('utf-8');
     
     // 解析设置
