@@ -34,6 +34,11 @@ const defaultConfig = {
         spriteOutputMode: "single" // "single" or "atlas"
     },
     
+    // 解密配置
+    decrypt: {
+        key: null
+    },
+
     // 高级配置
     advanced: {
         debug: false,
