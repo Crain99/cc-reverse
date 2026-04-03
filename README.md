@@ -21,6 +21,7 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - **支持 Spine 骨骼动画资源提取**（骨骼数据 + Atlas 图集 + 纹理）
 - **支持 DragonBones 骨骼动画资源提取**（骨骼数据 + 图集 + 纹理）
 - 生成符合 Cocos Creator 格式要求的项目文件
+- **支持 JSC 加密文件自动解密**（XXTEA + gzip，支持自动提取密钥）
 - **支持 Cocos Creator 2.3.x 和 2.4.x 版本自动检测**
 
 ## 版本支持
@@ -72,6 +73,7 @@ npm start -- --path <源项目路径>
   -o, --output <path>      输出路径 (默认: "./output")
   -v, --verbose            显示详细日志
   -s, --silent             静默模式，不显示进度
+  -k, --key <key>          JSC 文件的 XXTEA 加密密钥
   --version-hint <version> 提示Cocos Creator版本 (2.3.x|2.4.x)
   -h, --help               显示帮助信息
 ```
@@ -96,6 +98,12 @@ cc-reverse --path ./games/sample-game --version-hint 2.4.x
 
 # 处理2.4.x版本项目
 cc-reverse --path ./games/cocos24x-game --version-hint 2.4.x --verbose
+
+# 解密 JSC 加密项目（手动指定密钥）
+cc-reverse --path ./games/encrypted-game --key "your-xxtea-key"
+
+# 解密 JSC 加密项目（自动提取密钥）
+cc-reverse --path ./games/encrypted-game
 ```
 
 ### 配置文件
@@ -119,6 +127,11 @@ module.exports = {
     indent: "space" // "space" 或 "tab"
   },
   
+  // 解密配置
+  decrypt: {
+    key: null // XXTEA 加密密钥，也可通过 --key 参数指定
+  },
+
   // 资源处理配置
   assets: {
     extractTextures: true,
@@ -146,7 +159,7 @@ module.exports = {
 ## 注意事项
 
 - 此工具主要用于学习和研究目的
-- 无法还原经过加密的代码
+- 支持 XXTEA 加密的 JSC 文件解密，需通过 `--key` 参数提供密钥或由工具自动从项目文件中提取
 - 建议先在简单的开源项目上测试（例如"合成大西瓜"）
 - 请遵守相关法律法规和软件许可协议
 
@@ -182,6 +195,8 @@ cc-reverse/
 - chalk - 终端颜色支持
 - ora - 终端加载动画
 - progress - 进度条
+- xxtea-node - XXTEA 加解密
+- pako - gzip 解压
 - 其他工具库 (async, uuid, string-random 等)
 
 ## 开发
@@ -209,6 +224,10 @@ npm run build
     <img src="https://img.shields.io/github/stars/Crain99/cc-reverse?style=social" alt="给项目点个Star">
   </a>
 </p>
+
+## 鸣谢
+
+- [luckyaibin/cocoscreatorjscdecrypt](https://github.com/luckyaibin/cocoscreatorjscdecrypt) — JSC 文件 XXTEA 加解密参考
 
 ## 许可证
 
