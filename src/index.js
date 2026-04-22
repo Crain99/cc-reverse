@@ -17,8 +17,15 @@ program
   .option('-v, --verbose', '显示详细日志')
   .option('-s, --silent', '静默模式，不显示进度')
   .option('-k, --key <key>', 'JSC 文件的 XXTEA 加密密钥')
-  .option('--version-hint <version>', '提示Cocos Creator版本 (2.3.x|2.4.x)', '')
+  .option('--version-hint <version>', '提示Cocos Creator版本 (2.3.x|2.4.x|3.x)', '')
+  .option('--bundle <name>', '仅处理指定 bundle (3.x, 可重复)', collectList, [])
+  .option('--assets-only', '跳过脚本阶段')
+  .option('--scripts-only', '跳过资源阶段')
   .parse(process.argv);
+
+function collectList(value, previous) {
+  return previous.concat([value]);
+}
 
 const options = program.opts();
 
@@ -40,7 +47,10 @@ if (!sourcePath) {
       verbose: options.verbose,
       silent: options.silent,
       versionHint: options.versionHint,
-      key: options.key
+      key: options.key,
+      bundle: options.bundle,
+      assetsOnly: options.assetsOnly,
+      scriptsOnly: options.scriptsOnly,
     });
     logger.success('逆向工程完成！');
   } catch (err) {

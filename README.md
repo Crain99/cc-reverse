@@ -6,6 +6,9 @@
 # cc-reverse
 
 Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中提取和重建源代码与资源。
+
+> 💡 **想用自然语言驱动？** 试试配套的 Claude Code 插件 [cocos-reverse-engineering-skill](https://github.com/Crain99/cocos-reverse-engineering-skill) —— 一句 `/reverse-cocos path/to/build` 完成依赖检查 / 版本识别 / JSC 解密 / 反向 / 资源编目全流程。
+
 ## 项目热度
 
 如果您觉得这个项目对您有帮助，请给我们一个 Star ⭐️，这是对我们最大的鼓励！
@@ -14,7 +17,7 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 
 ## 功能特性
 
-- 解析和重建 Cocos Creator 项目结构
+- 解析和重建 Cocos Creator 项目结构（2.3.x / 2.4.x / **3.x**）
 - 提取并转换游戏脚本和资源文件
 - 处理 UUID 和元数据信息
 - 支持场景、预制体、动画等资源的提取
@@ -22,7 +25,10 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - **支持 DragonBones 骨骼动画资源提取**（骨骼数据 + 图集 + 纹理）
 - 生成符合 Cocos Creator 格式要求的项目文件
 - **支持 JSC 加密文件自动解密**（XXTEA + gzip，支持自动提取密钥）
-- **支持 Cocos Creator 2.3.x 和 2.4.x 版本自动检测**
+- **支持 Cocos Creator 2.3.x / 2.4.x / 3.x 版本自动检测**
+- **3.x bundle 感知**：自动发现 `assets/main`、`assets/internal`、`assets/resources` 及自定义 bundle；按 `config.json` 还原每个资源的原始项目路径
+- **CCON 二进制解码**（`.cconb` / `.ccon` v1）：解析 magic、版本头与对齐 chunk
+- **脚本恢复**：2.x 把打包后的 `project.js` 拆分为每文件 `.ts`；3.x 复制 `src/chunks/*.js`（SystemJS 模块）
 
 ## 版本支持
 
@@ -35,6 +41,14 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - 资源路径：`assets/` 或 `res/` 目录
 - 配置文件：`main.js`, `settings.js`, `project.js` 等
 - 使用 `--version-hint 2.4.x` 强制指定版本
+
+### Cocos Creator 3.x
+- 文件结构：`application.js` + `src/settings.json` + `assets/<bundle>/config.json` + `src/chunks/*.js` + `cocos-js/`
+- 按 bundle 独立解析 `config.json`（`paths` + `uuids` + `types` + `versions` + `extensionMap`）
+- 资源按原始项目路径（`assets/main/scenes/Main.scene` 等）还原，并生成匹配的 `.meta`
+- 支持 **CCON v1**（JSON 内嵌 + 8 字节对齐 chunks）；v2（notepack）保留原始数据留给后续处理
+- 加密：仅 bundle 级 `index.jsc`，可通过 `--key` 传入或从 `application.js` / `src/settings.json` 自动抽取
+- 使用 `--version-hint 3.x` 强制指定版本；`--bundle <name>` 只处理指定 bundle（可重复）
 
 ## 安装
 
@@ -74,7 +88,10 @@ npm start -- --path <源项目路径>
   -v, --verbose            显示详细日志
   -s, --silent             静默模式，不显示进度
   -k, --key <key>          JSC 文件的 XXTEA 加密密钥
-  --version-hint <version> 提示Cocos Creator版本 (2.3.x|2.4.x)
+  --version-hint <version> 提示Cocos Creator版本 (2.3.x|2.4.x|3.x)
+  --bundle <name>          仅处理指定 bundle (3.x，可重复)
+  --assets-only            跳过脚本阶段
+  --scripts-only           跳过资源阶段
   -h, --help               显示帮助信息
 ```
 
@@ -104,6 +121,18 @@ cc-reverse --path ./games/encrypted-game --key "your-xxtea-key"
 
 # 解密 JSC 加密项目（自动提取密钥）
 cc-reverse --path ./games/encrypted-game
+
+# 处理 Cocos Creator 3.x 项目（自动检测 bundle 结构）
+cc-reverse --path ./games/cocos3-game --verbose
+
+# 3.x：仅处理 main 与 resources bundle
+cc-reverse --path ./games/cocos3-game --bundle main --bundle resources
+
+# 3.x：跳过脚本，仅导出资源
+cc-reverse --path ./games/cocos3-game --assets-only
+
+# 强制以 3.x 解析（自动检测失败时）
+cc-reverse --path ./games/cocos3-game --version-hint 3.x
 ```
 
 ### 配置文件
@@ -155,6 +184,13 @@ module.exports = {
 | Spine 骨骼 (sp.SkeletonData) | Spine 骨骼动画 **新增** | `.json` + `.atlas` + `.png` |
 | DragonBones 骨骼 (dragonBones.DragonBonesAsset) | 龙骨骨骼数据 **新增** | `_ske.json` |
 | DragonBones 图集 (dragonBones.DragonBonesAtlasAsset) | 龙骨图集数据 **新增** | `_tex.json` + `_tex.png` |
+| **3.x 资源** | | |
+| 3.x 场景 (cc.SceneAsset) | 3.x 场景文件 | `.scene` + `.meta`（按 config.json 原始路径） |
+| 3.x 预制体 (cc.Prefab) | IFileData 格式保留，可重新导入编辑器 | `.prefab` + `.meta` |
+| 3.x ImageAsset / Texture2D / SpriteFrame | 根据 extensionMap 复制 `.png/.jpg/.webp/.pvr/.pkm/.astc` | native 原格式 + meta |
+| 3.x Mesh / AnimationClip / Terrain | CCON v1 解码后输出 JSON 文档；chunks 保留为 `.chunkN.bin` | `.json` + `.chunkN.bin` |
+| 3.x EffectAsset / Material | Shader 源/IR 保留为 JSON | `.effect` / `.mtl` + meta |
+| 3.x BufferAsset / TextAsset / JsonAsset | 原 native 副本 | `.bin` / `.txt` / `.json` + meta |
 
 ## 注意事项
 
@@ -171,9 +207,16 @@ cc-reverse/
 │   ├── core/                # 核心功能模块
 │   │   ├── codeAnalyzer.js  # 代码分析器
 │   │   ├── converters.js    # 格式转换器
+│   │   ├── jscDecryptor.js  # JSC XXTEA 解密
 │   │   ├── projectGenerator.js # 项目生成器
 │   │   ├── resourceProcessor.js # 资源处理器
-│   │   └── reverseEngine.js # 逆向工程引擎
+│   │   ├── reverseEngine.js # 逆向工程引擎（版本检测 + 分发）
+│   │   ├── typeDefinitions.js # 2.x 内置类型属性表
+│   │   └── cocos3x/         # Cocos Creator 3.x 专用模块
+│   │       ├── bundleConfig.js    # config.json 解析 + URL 还原
+│   │       ├── ccon.js            # CCON 二进制解码
+│   │       ├── deserializer.js    # IFileData 轻量内省
+│   │       └── engine3x.js        # 3.x 项目重建总调度
 │   ├── utils/              # 工具函数
 │   │   ├── fileManager.js  # 文件管理工具
 │   │   ├── logger.js       # 日志工具
