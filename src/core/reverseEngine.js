@@ -12,6 +12,7 @@ const { projectGenerator } = require('./projectGenerator');
 const { logger } = require('../utils/logger');
 const { loadConfig } = require('../config/configLoader');
 const { decryptProject, scanJscFiles, extractKeyFromProject } = require('./jscDecryptor');
+const { reverseProject3x } = require('./cocos3x/engine3x');
 
 // 将异步文件操作转为 Promise
 const readFile = promisify(fs.readFile);
@@ -28,17 +29,41 @@ const mkdir = promisify(fs.mkdir);
  * @returns {Promise<void>}
  */
 async function reverseProject(options) {
-  const { sourcePath, outputPath, verbose = false, versionHint, key } = options;
-  
+  const {
+    sourcePath,
+    outputPath,
+    verbose = false,
+    versionHint,
+    key,
+    bundle,
+    assetsOnly = false,
+    scriptsOnly = false,
+  } = options;
+
   // 全局配置初始化
   global.config = loadConfig();
   global.verbose = verbose;
-  
+
   // 检测Cocos Creator版本并设置相应的文件路径
   const projectInfo = detectProjectVersion(sourcePath, versionHint);
   global.cocosVersion = projectInfo.version;
-  
-  // 检查文件是否存在
+
+  // 3.x pipeline is bundle-oriented and has no single settings.js/project.js
+  // to validate — dispatch early.
+  if (projectInfo.version === '3.x') {
+    global.paths = { source: sourcePath, output: outputPath };
+    return reverseProject3x({
+      sourcePath,
+      outputPath,
+      bundleFilter: Array.isArray(bundle) ? bundle : (bundle ? [bundle] : []),
+      assetsOnly,
+      scriptsOnly,
+      key: key || global.config.decrypt?.key,
+      verbose,
+    });
+  }
+
+  // 检查文件是否存在 (2.x pipeline)
   validatePaths(projectInfo.resPath, projectInfo.settingsPath, projectInfo.projectPath);
   
   // 创建临时目录和输出目录
@@ -177,6 +202,44 @@ function detectProjectVersion(sourcePath, versionHint) {
     return null;
   }
 
+  // Helper: check if a given directory looks like a Cocos Creator 3.x build.
+  function is3xRoot(root) {
+    // Any bundle config or an application.js is enough.
+    const candidates = [
+      path.join(root, 'assets', 'main', 'config.json'),
+      path.join(root, 'assets', 'internal', 'config.json'),
+      path.join(root, 'assets', 'resources', 'config.json'),
+      path.join(root, 'application.js'),
+      path.join(root, 'src', 'settings.json'),
+    ];
+    if (candidates.some(p => fs.existsSync(p))) return true;
+    // Fallback: any config.json at depth 2 under assets/
+    const assetsDir = path.join(root, 'assets');
+    if (fs.existsSync(assetsDir)) {
+      try {
+        const entries = fs.readdirSync(assetsDir, { withFileTypes: true });
+        for (const e of entries) {
+          if (!e.isDirectory()) continue;
+          if (fs.existsSync(path.join(assetsDir, e.name, 'config.json'))) return true;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return false;
+  }
+
+  // Version hint: 3.x
+  if (versionHint === '3.x') {
+    for (const root of uniqueCandidateRoots) {
+      if (is3xRoot(root)) {
+        logger.info('使用用户指定的Cocos Creator 3.x项目结构');
+        return { version: '3.x', sourcePath: root };
+      }
+    }
+    logger.warn('用户指定3.x版本，但未找到对应文件结构，尝试自动检测...');
+  }
+
   // 如果用户提供了版本提示，优先使用对应版本的路径
   if (versionHint === '2.4.x') {
     const settings24 = findExistingPath(paths24x.settings);
@@ -209,6 +272,15 @@ function detectProjectVersion(sourcePath, versionHint) {
       };
     } else {
       logger.warn('用户指定2.3.x版本，但未找到对应文件结构，尝试自动检测...');
+    }
+  }
+
+  // Auto-detect 3.x first — its marker (config.json in a bundle dir) is very
+  // specific and cannot be confused with 2.x layouts.
+  for (const root of uniqueCandidateRoots) {
+    if (is3xRoot(root)) {
+      logger.info('自动检测到Cocos Creator 3.x项目结构');
+      return { version: '3.x', sourcePath: root };
     }
   }
 
@@ -258,7 +330,8 @@ function detectProjectVersion(sourcePath, versionHint) {
   // 如果都找不到，抛出详细错误信息
   throw new Error(`无法检测到有效的Cocos Creator项目结构，请检查输入路径是否正确。
 支持的文件结构：
-2.4.x: main.js/settings.js + project.js/main.js + assets/res目录
+3.x:   assets/<bundle>/config.json (或 application.js + src/settings.json)
+2.4.x: main.js + settings.js + assets/res目录
 2.3.x: src/settings.js + src/project.js + res目录`);
 }
 

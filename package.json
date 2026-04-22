@@ -1,7 +1,7 @@
 {
   "name": "cc-reverse",
-  "version": "1.0.0",
-  "description": "Cocos Creator 逆向工程工具",
+  "version": "2.0.0",
+  "description": "Cocos Creator 逆向工程工具 (支持 2.3.x / 2.4.x / 3.x)",
   "main": "src/index.js",
   "bin": {
     "cc-reverse": "bin/cc-reverse.js"
