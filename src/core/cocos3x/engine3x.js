@@ -43,6 +43,15 @@ async function pathExists(p) {
   try { await fsp.access(p); return true; } catch { return false; }
 }
 
+async function findBinarySettings(srcDir) {
+  if (!(await pathExists(srcDir))) return null;
+  let entries;
+  try { entries = await readdir(srcDir); } catch { return null; }
+  if (entries.includes('settings.bin')) return path.join(srcDir, 'settings.bin');
+  const hashed = entries.find(n => /^settings\.[0-9a-f]+\.bin$/i.test(n));
+  return hashed ? path.join(srcDir, hashed) : null;
+}
+
 /**
  * Native extensions we know how to detect from a JSON document's `_native`
  * field or the bundle's extensionMap.
@@ -268,6 +277,19 @@ async function detectProjectFlavor(sourcePath) {
       } catch {
         // fall through
       }
+    }
+  }
+
+  // 3.x marker — binary form (newer builds emit settings.bin or settings.<hash>.bin)
+  const binPath = await findBinarySettings(path.join(sourcePath, 'src'));
+  if (binPath) {
+    try {
+      const buf = await fsp.readFile(binPath);
+      const { decodeNotepack } = require('./notepack.js');
+      const s = decodeNotepack(buf);
+      return { flavor: '3.x', settings: s };
+    } catch (e) {
+      logger.warn(`Failed to decode binary settings at ${binPath}: ${e.message}`);
     }
   }
 
@@ -1163,4 +1185,5 @@ module.exports = {
   resolveOutputPath,
   writeAssetMeta,
   KLASS_TO_IMPORTER,
+  detectProjectFlavor,
 };
