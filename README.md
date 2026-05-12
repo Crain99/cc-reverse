@@ -71,7 +71,28 @@ Layers:
 
 After install, run `npm install` to pull the new deps (`ts-morph`, `prettier`). Use `--script-layers 3` to stop at the JS-with-decorators stage if you don't want the TS project.
 
-Future PR 5 adds Layer 7 (optional humanify pass for minified identifiers) and retires the legacy `assets/Scripts/` copy.
+### Layer 7 — humanify (opt-in)
+
+After running the 6-layer recovery, you can optionally run **Layer 7** to rename minified identifiers (e.g., `t`, `e`, `n`) into human-readable names by shelling out to the [`humanify`](https://github.com/jehna/humanify) CLI. This is **opt-in** and **not a hard dep** — install it yourself first:
+
+```bash
+npm install -g humanify
+```
+
+Then point the wrapper at a recovered output directory:
+
+```bash
+cc-reverse humanify <outDir> [--provider local|openai] [--base-url <url>] [--api-key <key>] [--model <name>]
+```
+
+- **Output:** `<outDir>/humanified/`
+- **Providers:**
+  - `local` (default) — offline LLM via `humanify`'s built-in model download. No keys required.
+  - `openai` — any OpenAI-compatible endpoint. Reads `OPENAI_BASE_URL` / `OPENAI_API_KEY` from env (override with `--base-url` / `--api-key` / `--model`).
+
+If the `humanify` binary is not on `PATH`, the wrapper exits with `1` and prints the install hint — it never auto-installs.
+
+> ⚠️ **`copilot-api` is a user-borne risk path.** Some users route humanify through a `copilot-api` shim to use a paid GitHub Copilot subscription as the LLM. This is **not** wired by `cc-reverse` and is not officially supported — using it may violate GitHub's ToS, and any consequences are entirely the user's responsibility. Stick to `local` or your own `openai`-compatible endpoint.
 
 ## 安装
 
