@@ -5,6 +5,17 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## PR 8 — E2E harness + CLI dispatch fix + 首轮 golden 基线
+
+- **CLI dispatch fix (`src/index.js`):** root program now has an `.action()` handler so `node bin/cc-reverse.js -p <path> -o <out>` actually enters `reverseProject` instead of silently printing `--help` (commander v11 requires an explicit root action when subcommands are registered). `--path` validation and the `CC_SOURCE_PATH` env var fallback are preserved.
+- **`validate` subcommand:** registered on the root program (`cc-reverse validate <outDir>`) as a unified entry point alongside the existing `bin/validate.js` shim, which is kept for back-compat.
+- **E2E harness (`test/e2e/`):**
+  - `run-sample.js` — `runSample(samplePath, outBase)` shells out to the CLI for both unpack and `validate`, writing a combined `.e2e-report.json`.
+  - `golden.test.js` — vitest-parameterised over three real samples under `~/mini/` (slgq-reverse / dabaoyiqie-reverse / cgxfd-reverse). Missing samples are gracefully `test.skip`'d so CI and other dev machines don't break. Asserts only that unpack exits 0; quality-gate regressions (a baseline-`passed` gate now failing) fail the test, improvements emit a console warning.
+  - `test/baselines/.gitkeep` — placeholder; first-run manifests are written to `<out>/.suggested-baseline.json` for human review before commit.
+- **First baseline report:** `docs/e2e-baseline-report-2026-05-12.md` — captures real numbers from all three samples (5/6 gates pass each; only `recoveryReport` declared-vs-actual asset count mismatch remains as a known gap).
+- **README:** added "Running E2E (golden samples)" section documenting the `~/mini/<sample>` convention and `npm run e2e`.
+
 ## PR 6 — Wave 3 (R14–R16) extended asset coverage + PR 5 carry-overs
 
 - **R14 — Spine `sp.SkeletonData` recovery:** mapped to the `spine` importer in `KLASS_TO_IMPORTER`. Rich `.meta` carries `userData.textures` (uuid array) and `userData.atlasInline` flag, sourced from the rehydrated import doc.
