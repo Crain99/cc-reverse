@@ -41,3 +41,22 @@ describe('validate gate: typedArrays', () => {
     expect(r.failed).toEqual([]);
   });
 });
+
+describe('validate gate: layeredScripts', () => {
+  it('passes when assets/scripts/ contains at least one .js with import statement', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ls-'));
+    const dir = path.join(tmp, 'assets', 'scripts', 'index');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'A.js'), "import { Component } from 'cc';\nclass A {}\n");
+    const r = runGates(tmp, { gates: ['layeredScripts'] });
+    expect(r.failed).toEqual([]);
+    expect(r.passed.map(p => p.name)).toContain('layeredScripts');
+  });
+
+  it('passes (informational) when no assets/scripts/ exists', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ls-'));
+    const r = runGates(tmp, { gates: ['layeredScripts'] });
+    expect(r.failed).toEqual([]);
+    expect(r.passed.map(p => p.name)).toContain('layeredScripts');
+  });
+});
