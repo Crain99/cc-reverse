@@ -174,4 +174,75 @@ function extractSceneUrls(settings, bundles) {
   return urls;
 }
 
-module.exports = { writeCocos2xProject };
+/**
+ * Write a Cocos Creator 3.x project skeleton, populated from the source build's
+ * src/settings.json when available.
+ *
+ * @param {string} outputPath
+ * @param {object} opts
+ * @param {string} [opts.projectName='recovered-cocos3-project']
+ * @param {string} [opts.cocosVersion='3.8.0']
+ * @param {object} [opts.settings] parsed src/settings.json contents
+ */
+async function writeCocos3xProject(outputPath, opts = {}) {
+  const settings = opts.settings || {};
+  const projectName = opts.projectName || 'recovered-cocos3-project';
+  const cocosVersion = opts.cocosVersion || pickCocosVersion(settings) || '3.8.0';
+  const launchScene = settings.launchScene || (settings.scenes && settings.scenes[0]?.url) || 'current';
+  const design = settings.designResolution || settings.design || { width: 1280, height: 720 };
+
+  await mkdir(outputPath, { recursive: true });
+
+  const projectJson = {
+    name: projectName,
+    version: cocosVersion,
+    engine: 'cocos-creator',
+    packages: ['assets'],
+    creator: { version: cocosVersion },
+    recoveredBy: 'cc-reverse',
+  };
+  await writeFile(
+    path.join(outputPath, 'project.json'),
+    JSON.stringify(projectJson, null, 2),
+  );
+
+  const safePkgName = projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'recovered-project';
+  const pkgJson = {
+    name: safePkgName,
+    version: '1.0.0',
+    description: 'Recovered by cc-reverse',
+    creator: { version: cocosVersion },
+    dependencies: {},
+  };
+  await writeFile(
+    path.join(outputPath, 'package.json'),
+    JSON.stringify(pkgJson, null, 2),
+  );
+
+  const settingsDir = path.join(outputPath, 'settings');
+  await mkdir(settingsDir, { recursive: true });
+  const settingsProject = {
+    'engine-version': cocosVersion,
+    'design-resolution-width': design.width,
+    'design-resolution-height': design.height,
+    'fit-width': false,
+    'fit-height': false,
+    'start-scene': launchScene,
+    'package-name': 'org.cocos.' + safePkgName,
+    'recovered-from': settings.assetsZip ? 'assets.zip' : 'web-build',
+  };
+  await writeFile(
+    path.join(settingsDir, 'project.json'),
+    JSON.stringify(settingsProject, null, 2),
+  );
+}
+
+function pickCocosVersion(settings) {
+  if (!settings) return null;
+  if (typeof settings.engineVersion === 'string') return settings.engineVersion;
+  if (settings.creator && typeof settings.creator.version === 'string') return settings.creator.version;
+  if (typeof settings.version === 'string' && /^\d+\./.test(settings.version)) return settings.version;
+  return null;
+}
+
+module.exports = { writeCocos2xProject, writeCocos3xProject };

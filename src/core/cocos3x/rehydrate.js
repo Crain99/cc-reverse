@@ -20,6 +20,11 @@
  * Reference (cocos-engine v3.x, structurally identical to 2.4 bundle output):
  *   cocos/serialization/deserialize.ts `deserializeCCObject`, `ASSIGNMENTS`,
  *   `parseInstances`, `dereference`, `parseResult`.
+ *
+ * NOTE: 3.x rehydration is fully driven by each document's own
+ * `sharedClasses` array. We deliberately do NOT consult the 2.x
+ * hardcoded `typeDefinitions` table — see test/unit/cocos3x.no-static-types.test.js
+ * for the regression guard.
  */
 
 // ---------------------------------------------------------------------------

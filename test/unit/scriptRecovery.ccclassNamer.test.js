@@ -76,6 +76,47 @@ describe('Layer 4: ccclassNamer', () => {
     expect(out[0].ccclassName).toBe('Bar');
   });
 
+  it('renames class self-references along with the declaration', async () => {
+    const src = `
+      import { _decorator, Component } from 'cc';
+      const { ccclass } = _decorator;
+      cclegacy._RF.push({}, "self-uuid", "Player", undefined);
+      @ccclass('Player')
+      class t extends Component {
+        static spawn() { return t.create(); }
+        static create() { return new t(); }
+      }
+      cclegacy._RF.pop();
+    `;
+    const mod = makeModule(src, { name: 't' });
+    const out = await applyCcclassNames([mod]);
+    expect(out[0].ccclassName).toBe('Player');
+    const code = generate(out[0].ast).code;
+    expect(code).toMatch(/class\s+Player\s+extends/);
+    expect(code).toMatch(/Player\.create\(\)/);
+    expect(code).toMatch(/new\s+Player\(\)/);
+    expect(code).not.toMatch(/\bt\.create\b/);
+    expect(code).not.toMatch(/\bnew\s+t\b/);
+  });
+
+  it('handles bare _RF.push (no cclegacy. prefix)', async () => {
+    const src = `
+      import { _decorator, Component } from 'cc';
+      const { ccclass } = _decorator;
+      _RF.push({}, "bare-uuid", "Bare", undefined);
+      @ccclass('Bare')
+      class Bare extends Component {}
+      _RF.pop();
+    `;
+    const mod = makeModule(src, { name: 'Bare' });
+    const out = await applyCcclassNames([mod]);
+    expect(out[0].ccclassName).toBe('Bare');
+    expect(out[0].uuid).toBe('bare-uuid');
+    expect(out[0].uuidMap).toEqual({ 'bare-uuid': { className: 'Bare', moduleName: 'Bare' } });
+    const code = generate(out[0].ast).code;
+    expect(code).not.toMatch(/_RF\.(push|pop)/);
+  });
+
   it('passthrough: module without class is unchanged and has null fields', async () => {
     const mod = { name: 'plain', ast: parse('var x = 1;', { sourceType: 'module' }), deps: [], setterBindings: [], source: 'var x = 1;' };
     const out = await applyCcclassNames([mod]);

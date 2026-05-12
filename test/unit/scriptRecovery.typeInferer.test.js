@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { inferFieldTypes } from '../../src/core/cocos3x/scriptRecovery/typeInferer.js';
+import { inferFieldTypes, inferType } from '../../src/core/cocos3x/scriptRecovery/typeInferer.js';
 
 describe('Layer 5: typeInferer', () => {
   it('infers number / string / boolean from scalar field values', async () => {
@@ -74,5 +74,36 @@ describe('Layer 5: typeInferer', () => {
     const modules = [{ name: 'P', ccclassName: 'P', uuid: null, uuidMap: {} }];
     const out = await inferFieldTypes(modules, {});
     expect(out[0].fieldTypes).toEqual({});
+  });
+
+  it('inferType: __uuid__ miss falls back to "any" (MVP)', () => {
+    expect(inferType({ __uuid__: 'unknown-uuid' }, {}, [])).toBe('any');
+  });
+
+  it('inferType: __id__ out of bounds falls back to "any"', () => {
+    const scene = [{ __type__: 'cc.Node' }];
+    expect(inferType({ __id__: 99 }, {}, scene)).toBe('any');
+  });
+
+  it('aggregates uuidMap across modules: A._target → B', async () => {
+    const modules = [
+      {
+        name: 'A',
+        ccclassName: 'A',
+        uuid: 'ua',
+        uuidMap: { ua: { className: 'A', moduleName: 'A' } },
+      },
+      {
+        name: 'B',
+        ccclassName: 'B',
+        uuid: 'ub',
+        uuidMap: { ub: { className: 'B', moduleName: 'B' } },
+      },
+    ];
+    const context = {
+      scenes: [[{ __type__: 'A', _target: { __uuid__: 'ub' } }]],
+    };
+    const out = await inferFieldTypes(modules, context);
+    expect(out[0].fieldTypes._target).toBe('B');
   });
 });
