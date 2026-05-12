@@ -88,6 +88,62 @@ const CLASS_DIR = {
 };
 
 /**
+ * R12 — Cocos class → Creator importer name. Used by writeAssetMeta to emit
+ * editor-recognised .meta files for non-script assets.
+ */
+const KLASS_TO_IMPORTER = {
+  'cc.SpriteFrame': 'sprite-frame',
+  'cc.ImageAsset': 'image',
+  'cc.Texture2D': 'texture',
+  'cc.AudioClip': 'audio-clip',
+  'cc.JsonAsset': 'json',
+  'cc.TextAsset': 'text',
+  'cc.Prefab': 'prefab',
+  'cc.SceneAsset': 'scene',
+  'cc.Material': 'material',
+  'cc.EffectAsset': 'effect',
+  'cc.AnimationClip': 'animation-clip',
+  'cc.Mesh': 'gltf-mesh',
+  'cc.SkeletalAnimationClip': 'skeletal-animation-clip',
+  'cc.BufferAsset': 'buffer',
+};
+
+/**
+ * R11 — Resolve an asset's output path. Prefers the source project's
+ * `config.paths[uuid].path` when present; otherwise falls back to
+ * `<CLASS_DIR[klass] || 'raw'>/<uuid>`.
+ *
+ * @param {string} uuid
+ * @param {object} cfg   bundle config (or anything with .paths)
+ * @param {string} klass cc class name
+ * @param {string} [ext='']
+ */
+function resolveOutputPath(uuid, cfg, klass, ext = '') {
+  const explicit = cfg && cfg.paths && cfg.paths[uuid] && cfg.paths[uuid].path;
+  if (explicit) return explicit + ext;
+  const sub = CLASS_DIR[klass] || 'raw';
+  return path.join(sub, uuid) + ext;
+}
+
+/**
+ * R12 — Write an editor-style asset .meta next to the recovered file.
+ */
+async function writeAssetMeta(filePath, opts) {
+  const { uuid, klass } = opts;
+  const importer = KLASS_TO_IMPORTER[klass] || 'unknown';
+  const meta = {
+    ver: '1.0.0',
+    importer,
+    imported: true,
+    uuid,
+    files: [path.extname(filePath)],
+    subMetas: {},
+    userData: { recoveredBy: 'cc-reverse' },
+  };
+  await writeFile(filePath + '.meta', JSON.stringify(meta, null, 2));
+}
+
+/**
  * Main entry point for 3.x projects. Invoked from reverseEngine when the
  * detector decides we're in 3.x territory.
  *
@@ -435,8 +491,7 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
   // Choose an output path. Prefer the project path from config.paths — that's
   // what the editor will see.
   const className = info.type || 'cc.Asset';
-  const outDir = classOutputDir(className);
-  const relPath = info.path || `${outDir}/${uuid}`;
+  const relPath = resolveOutputPath(uuid, cfg, className);
   const outBase = path.join(bundleOut, relPath);
   await mkdir(path.dirname(outBase), { recursive: true });
 
@@ -582,6 +637,22 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
 
   // --- Meta ---
   await writeMeta(outBase, uuid, className, importFromCcon, importPackRef);
+
+  // R12 — emit a richer editor-style .meta for non-script assets when class
+  // maps to a known importer and we haven't already written one at the
+  // asset's primary file path.
+  if ((importRecovered || nativeRecovered) && KLASS_TO_IMPORTER[className]) {
+    const primaryExt = isPureNativeClass(className) ? '' : inferImportExt(className);
+    const primaryFile = outBase + primaryExt;
+    const richMetaPath = primaryFile + '.meta';
+    try {
+      if (!(await pathExists(richMetaPath))) {
+        await writeAssetMeta(primaryFile, { uuid, klass: className });
+      }
+    } catch {
+      // best-effort
+    }
+  }
 
   return importRecovered || nativeRecovered;
 }
@@ -1062,4 +1133,12 @@ async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
   await writeFile(path.join(outputPath, 'RECOVERY_REPORT.md'), lines.join('\n'));
 }
 
-module.exports = { reverseProject3x, discoverBundles, resolveImportThroughRedirect, recoverScriptsLayered };
+module.exports = {
+  reverseProject3x,
+  discoverBundles,
+  resolveImportThroughRedirect,
+  recoverScriptsLayered,
+  resolveOutputPath,
+  writeAssetMeta,
+  KLASS_TO_IMPORTER,
+};
