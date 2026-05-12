@@ -43,6 +43,15 @@ async function pathExists(p) {
   try { await fsp.access(p); return true; } catch { return false; }
 }
 
+async function findBinarySettings(srcDir) {
+  if (!(await pathExists(srcDir))) return null;
+  let entries;
+  try { entries = await readdir(srcDir); } catch { return null; }
+  if (entries.includes('settings.bin')) return path.join(srcDir, 'settings.bin');
+  const hashed = entries.find(n => /^settings\.[0-9a-f]+\.bin$/i.test(n));
+  return hashed ? path.join(srcDir, hashed) : null;
+}
+
 /**
  * Native extensions we know how to detect from a JSON document's `_native`
  * field or the bundle's extensionMap.
@@ -106,6 +115,9 @@ const KLASS_TO_IMPORTER = {
   'cc.Mesh': 'gltf-mesh',
   'cc.SkeletalAnimationClip': 'skeletal-animation-clip',
   'cc.BufferAsset': 'buffer',
+  'sp.SkeletonData': 'spine',
+  'dragonBones.DragonBonesAsset': 'dragonbones',
+  'dragonBones.DragonBonesAtlasAsset': 'dragonbones-atlas',
 };
 
 /**
@@ -129,8 +141,10 @@ function resolveOutputPath(uuid, cfg, klass, ext = '') {
  * R12 — Write an editor-style asset .meta next to the recovered file.
  */
 async function writeAssetMeta(filePath, opts) {
-  const { uuid, klass } = opts;
+  const { uuid, klass, extras } = opts;
   const importer = KLASS_TO_IMPORTER[klass] || 'unknown';
+  const userData = { recoveredBy: 'cc-reverse' };
+  if (extras && typeof extras === 'object') Object.assign(userData, extras);
   const meta = {
     ver: '1.0.0',
     importer,
@@ -138,7 +152,7 @@ async function writeAssetMeta(filePath, opts) {
     uuid,
     files: [path.extname(filePath)],
     subMetas: {},
-    userData: { recoveredBy: 'cc-reverse' },
+    userData,
   };
   await writeFile(filePath + '.meta', JSON.stringify(meta, null, 2));
 }
@@ -263,6 +277,19 @@ async function detectProjectFlavor(sourcePath) {
       } catch {
         // fall through
       }
+    }
+  }
+
+  // 3.x marker — binary form (newer builds emit settings.bin or settings.<hash>.bin)
+  const binPath = await findBinarySettings(path.join(sourcePath, 'src'));
+  if (binPath) {
+    try {
+      const buf = await fsp.readFile(binPath);
+      const { decodeNotepack } = require('./notepack.js');
+      const s = decodeNotepack(buf);
+      return { flavor: '3.x', settings: s };
+    } catch (e) {
+      logger.warn(`Failed to decode binary settings at ${binPath}: ${e.message}`);
     }
   }
 
@@ -639,16 +666,33 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
   await writeMeta(outBase, uuid, className, importFromCcon, importPackRef);
 
   // R12 — emit a richer editor-style .meta for non-script assets when class
-  // maps to a known importer and we haven't already written one at the
-  // asset's primary file path.
+  // maps to a known importer. We unconditionally overwrite any legacy stub
+  // produced by writeMeta() above (PR 6 carry-over #1: pure-native classes
+  // like cc.BufferAsset have primaryExt='' so richMetaPath collides with
+  // the stub path, and the rich meta is the intended editor-facing output).
   if ((importRecovered || nativeRecovered) && KLASS_TO_IMPORTER[className]) {
     const primaryExt = isPureNativeClass(className) ? '' : inferImportExt(className);
     const primaryFile = outBase + primaryExt;
-    const richMetaPath = primaryFile + '.meta';
+    let extras;
+    if (importRecovered) {
+      try {
+        const doc = JSON.parse(await fsp.readFile(outBase + importExt, 'utf-8'));
+        if (className === 'sp.SkeletonData') {
+          const textures = Array.isArray(doc.textures)
+            ? doc.textures.map(t => t && t.__uuid__).filter(Boolean) : [];
+          extras = { textures };
+          if (doc.atlasText) extras.atlasInline = true;
+        } else if (className === 'dragonBones.DragonBonesAsset') {
+          const atlasUuid = doc.dragonBonesAtlas && doc.dragonBonesAtlas.__uuid__;
+          if (atlasUuid) extras = { atlasUuid };
+        } else if (className === 'dragonBones.DragonBonesAtlasAsset') {
+          const textureUuid = doc.texture && doc.texture.__uuid__;
+          if (textureUuid) extras = { textureUuid };
+        }
+      } catch { /* best-effort */ }
+    }
     try {
-      if (!(await pathExists(richMetaPath))) {
-        await writeAssetMeta(primaryFile, { uuid, klass: className });
-      }
+      await writeAssetMeta(primaryFile, { uuid, klass: className, extras });
     } catch {
       // best-effort
     }
@@ -1141,4 +1185,5 @@ module.exports = {
   resolveOutputPath,
   writeAssetMeta,
   KLASS_TO_IMPORTER,
+  detectProjectFlavor,
 };

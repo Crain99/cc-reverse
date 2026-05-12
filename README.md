@@ -47,6 +47,8 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - 按 bundle 独立解析 `config.json`（`paths` + `uuids` + `types` + `versions` + `extensionMap`）
 - 资源按原始项目路径（`assets/main/scenes/Main.scene` 等）还原，并生成匹配的 `.meta`
 - 支持 **CCON v1**（JSON 内嵌 + 8 字节对齐 chunks）与 **CCON v2**（notepack/msgpack 子集解码，无外部依赖）
+- **二进制 `settings.bin` 解码**（含哈希变体 `settings.<hash>.bin`），与 `settings.json` 路径并存时优先 JSON
+- Spine / DragonBones 富 `.meta`：在 `userData` 中自动写入 `textures` / `atlasUuid` / `textureUuid` 等交叉引用，方便编辑器重新关联
 - **完整 IPackedFileData 反序列化**：多段 pack 自动按共享头切片并逐段 rehydrate
 - **TypedArray 字段还原**：DataTypeID 13/14 输出 `{ __type__: 'Float32Array', __data__: '<base64>' }` 标记，覆盖 9 种 TypedArray 构造器
 - **跨 bundle redirect 解析**：本地缺失的 import 文件会通过 `cfg.redirect` 自动从依赖 bundle 中读取

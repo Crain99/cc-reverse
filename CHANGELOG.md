@@ -5,6 +5,17 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## PR 6 — Wave 3 (R14–R16) extended asset coverage + PR 5 carry-overs
+
+- **R14 — Spine `sp.SkeletonData` recovery:** mapped to the `spine` importer in `KLASS_TO_IMPORTER`. Rich `.meta` carries `userData.textures` (uuid array) and `userData.atlasInline` flag, sourced from the rehydrated import doc.
+- **R15 — DragonBones recovery:** `dragonBones.DragonBonesAsset` → `dragonbones`, `dragonBones.DragonBonesAtlasAsset` → `dragonbones-atlas`. Cross-uuid extras (`atlasUuid` on the asset, `textureUuid` on the atlas) emitted in `.meta` so editor reimport can re-link the pair.
+- **R16 — Binary `settings.bin` decoding:** `detectProjectFlavor` now probes `src/settings.bin` (and hashed `settings.<hash>.bin`) after the JSON form, decoding via the existing notepack subset (`src/core/cocos3x/notepack.js`). JSON form still takes precedence when both are present.
+- **Carry-over fixes (PR 5 reviews):**
+  - Pure-native classes (e.g. `cc.BufferAsset`, `cc.Mesh`) no longer lose their rich `.meta` to the legacy stub — the `pathExists` guard is gone for `KLASS_TO_IMPORTER`-mapped classes; rich meta is the intended editor-facing output.
+  - `pickCocosVersion` `version` branch tightened from `/^\d+\./` to `/^3\./`, so a 2.4.x string can't accidentally feed the 3.x scaffold; helper exported for unit testing.
+- **`writeAssetMeta`:** now accepts an optional `extras` object merged into `userData`. Back-compat preserved (callers without `extras` keep the prior `{ recoveredBy: 'cc-reverse' }` shape).
+- **Tests:** 105 → **123 passing** (33 files), no regressions.
+
 ## PR 5 — Wave 2 (R9–R12) + Layer 7 humanify + carry-over fixes
 
 - **R9 — Dynamic 3.x project metadata:** `project.json`, `package.json`, and `settings/project.json` are now derived from the source build's `src/settings.json` (engine version, project name, design resolution, launch scene). Hardcoded constants removed. Implemented in new `writeCocos3xProject` in `src/core/cocos3x/projectScaffold.js`; wired through `engine3x.writeProjectDescriptor`.

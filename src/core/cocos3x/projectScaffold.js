@@ -241,8 +241,8 @@ function pickCocosVersion(settings) {
   if (!settings) return null;
   if (typeof settings.engineVersion === 'string') return settings.engineVersion;
   if (settings.creator && typeof settings.creator.version === 'string') return settings.creator.version;
-  if (typeof settings.version === 'string' && /^\d+\./.test(settings.version)) return settings.version;
+  if (typeof settings.version === 'string' && /^3\./.test(settings.version)) return settings.version;
   return null;
 }
 
-module.exports = { writeCocos2xProject, writeCocos3xProject };
+module.exports = { writeCocos2xProject, writeCocos3xProject, pickCocosVersion };
