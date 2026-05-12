@@ -1,46 +1,46 @@
-# PR 2 — Wave 1 3.x Deserialization Completion
+# PR 2 — Wave 1 3.x 反序列化补全
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Close the four remaining gaps in 3.x asset deserialization — CCON v2 (notepack) decoder, full IPackedFileData rehydrate, TypedArray DataTypeID coverage in `rehydrate.js`, and cross-bundle redirect resolution. Add validate gates that prove the new paths work on the zqndtz golden sample.
+**目标:** 关闭 3.x 资源反序列化中剩余的四个缺口 — CCON v2 (notepack) 解码器、IPackedFileData 完整复原、`rehydrate.js` 中 TypedArray DataTypeID 覆盖、跨 bundle 重定向解析。增加 validate gates 来证明新路径在 zqndtz golden 样本上工作。
 
-**Architecture:** Four independent units bolted onto the existing infrastructure laid down in PR 1.
-- **R5 CCON v2** lives in `src/core/cocos3x/notepack.js` (a small notepack/msgpack decoder) and slots into `decodeCcon()` so v2 returns a real `document` instead of `rawJson`. We hand-roll the subset of msgpack actually emitted by Cocos rather than pull a 50 KB dep.
-- **R6 IPackedFileData** moves from "skip and write raw" (`tryRehydrate` returns `null` for `{sections:[]}`) to "rehydrate each section by splicing it onto the shared header" — code path already prototyped in `extractPackSection`, just needs to be invoked from `tryRehydrate`.
-- **R7 TypedArray** adds the missing `DataTypeID.TypedArray` (=13 in current cocos-engine) plus its companion array form to `rehydrate.assignByType`. Edge cases: zero-length arrays, mixed numeric types.
-- **R8 Cross-bundle redirect** resolves `cfg.redirect[uuid] -> depBundleName` at unpack time so a missing import file in bundle A is fetched from bundle B (the engine does this transparently at runtime).
+**架构:** 在 PR 1 奠定的基础设施之上，挂上四个相互独立的单元。
+- **R5 CCON v2** 位于 `src/core/cocos3x/notepack.js`（一个小的 notepack/msgpack 解码器），并接入 `decodeCcon()`，使 v2 返回真正的 `document` 而非 `rawJson`。我们手写 Cocos 实际发出的 msgpack 子集，而不是引入 50 KB 的依赖。
+- **R6 IPackedFileData** 从 "skip and write raw"（`tryRehydrate` 对 `{sections:[]}` 返回 `null`）走向 "通过把每个 section 拼到共享 header 上来 rehydrate"— 该代码路径已在 `extractPackSection` 中原型化，只需从 `tryRehydrate` 调用即可。
+- **R7 TypedArray** 将缺失的 `DataTypeID.TypedArray`（当前 cocos-engine 中 = 13）及其数组形式加入 `rehydrate.assignByType`。边界情况：零长度数组、混合数值类型。
+- **R8 跨 bundle 重定向** 在 unpack 时解析 `cfg.redirect[uuid] -> depBundleName`，使 bundle A 中缺失的 import 文件能从 bundle B 取得（运行时引擎透明地这么做）。
 
-Each unit is gated by a unit test (synthetic fixture), then verified by a validate gate that runs against zqndtz's actual output.
+每个单元先由单元测试（合成 fixture）把关，再由对 zqndtz 实际输出运行的 validate gate 验证。
 
-**Tech Stack:** Node 14+, vitest 1.x (ESM imports), `Buffer`, `fs/promises`. No new runtime deps.
-
----
-
-## Pre-flight
-
-You are working in `/Users/lcf/code/cc-reverse/.worktrees/pr2-wave1-3x-deserialize` on branch `feature/pr2-wave1-3x-deserialize` (already created from `main` after PR 1 merge).
-
-**Test files use ESM `import` syntax** — vitest 1.x rejects `require('vitest')`. Source files remain CJS (`module.exports`).
-
-`npm test` baseline before any changes: 16 passed.
+**技术栈:** Node 14+、vitest 1.x（ESM imports）、`Buffer`、`fs/promises`。无新增运行时依赖。
 
 ---
 
-## Task 1: R5 — CCON v2 (notepack) decoder
+## 预检
 
-**Files:**
-- Create: `src/core/cocos3x/notepack.js`
-- Modify: `src/core/cocos3x/ccon.js` (call notepack decoder when version === 2)
-- Create: `test/unit/notepack.test.js`
-- Create: `test/unit/ccon.v2.test.js`
+你在 `/Users/lcf/code/cc-reverse/.worktrees/pr2-wave1-3x-deserialize` 工作，分支 `feature/pr2-wave1-3x-deserialize`（PR 1 合并后从 `main` 创建）。
 
-### Subtask 1.1: notepack subset decoder
+**测试文件使用 ESM `import` 语法** — vitest 1.x 拒绝 `require('vitest')`。源文件保持 CJS（`module.exports`）。
 
-Cocos's `serialize-ccon.ts` uses `@cocos/notepack-lite`, which is msgpack with one extension: it flips the byte order for `bin8/16/32` lengths to be big-endian (matches the spec) but uses little-endian for everything else cocos cares about (it doesn't — msgpack is strictly big-endian). For our purposes we implement strict msgpack big-endian per https://github.com/msgpack/msgpack/blob/master/spec.md and validate against fixtures.
+变更前 `npm test` 基线：16 passed。
 
-**Step 1: Write failing tests**
+---
 
-`test/unit/notepack.test.js`:
+## Task 1: R5 — CCON v2 (notepack) 解码器
+
+**文件:**
+- 创建: `src/core/cocos3x/notepack.js`
+- 修改: `src/core/cocos3x/ccon.js`（version === 2 时调用 notepack 解码器）
+- 创建: `test/unit/notepack.test.js`
+- 创建: `test/unit/ccon.v2.test.js`
+
+### Subtask 1.1: notepack 子集解码器
+
+Cocos 的 `serialize-ccon.ts` 使用 `@cocos/notepack-lite`，它是 msgpack，带一个扩展：将 `bin8/16/32` 的长度字节序翻转为大端（与规范一致），但其他 cocos 关心的部分使用小端（实际上 Cocos 不关心 — msgpack 严格大端）。我们的目的：按 https://github.com/msgpack/msgpack/blob/master/spec.md 实现严格大端 msgpack，并以 fixture 校验。
+
+**Step 1: 编写失败测试**
+
+`test/unit/notepack.test.js`：
 ```js
 import { describe, it, expect } from 'vitest';
 import { decodeNotepack } from '../../src/core/cocos3x/notepack.js';
@@ -136,13 +136,13 @@ describe('decodeNotepack — errors', () => {
 });
 ```
 
-**Step 2: Run, expect failure (module missing).**
+**Step 2: 运行，预期失败（模块缺失）。**
 
-`npm test -- notepack` → import error.
+`npm test -- notepack` → import 错误。
 
-**Step 3: Implement.**
+**Step 3: 实现。**
 
-`src/core/cocos3x/notepack.js`:
+`src/core/cocos3x/notepack.js`：
 ```js
 /*
  * Minimal msgpack decoder used to read CCON v2 bodies.
@@ -238,13 +238,13 @@ function ensure(r, n) {
 module.exports = { decodeNotepack };
 ```
 
-**Step 4: `npm test -- notepack` → all green.**
+**Step 4: `npm test -- notepack` → 全绿。**
 
-### Subtask 1.2: Wire into ccon.js
+### Subtask 1.2: 接入 ccon.js
 
-**Step 5: Test for v2 decoding.**
+**Step 5: v2 解码测试。**
 
-`test/unit/ccon.v2.test.js`:
+`test/unit/ccon.v2.test.js`：
 ```js
 import { describe, it, expect } from 'vitest';
 import { decodeCcon } from '../../src/core/cocos3x/ccon.js';
@@ -280,9 +280,9 @@ describe('decodeCcon v2', () => {
 });
 ```
 
-**Step 6: Modify `ccon.js`.**
+**Step 6: 修改 `ccon.js`。**
 
-Replace the `if (version === 1) { ... }` block (and the result-building tail) with:
+将 `if (version === 1) { ... }` 块（以及构建结果的尾部）替换为：
 ```js
 const { decodeNotepack } = require('./notepack');
 // ...
@@ -306,11 +306,11 @@ if (rawJson !== null) result.rawJson = rawJson;
 return result;
 ```
 
-(Variable rename: the existing code calls the slice `rawJson`. Rename the local to `rawJsonBuf` to avoid shadow conflict.)
+（变量重命名：现有代码把切片叫做 `rawJson`。把局部变量改名为 `rawJsonBuf` 以避免遮蔽冲突。）
 
-**Step 7: `npm test` → all green (was 16, now ≥18).**
+**Step 7: `npm test` → 全绿（之前 16，现 ≥18）。**
 
-**Step 8: Commit.**
+**Step 8: 提交。**
 
 ```
 feat(3x): CCON v2 (notepack) decoder (R5)
@@ -322,18 +322,18 @@ feat(3x): CCON v2 (notepack) decoder (R5)
 
 ---
 
-## Task 2: R6 — IPackedFileData full rehydrate
+## Task 2: R6 — IPackedFileData 完整 rehydrate
 
-**Files:**
-- Modify: `src/core/cocos3x/rehydrate.js` (export multi-section rehydrate)
-- Modify: `src/core/cocos3x/engine3x.js` (`tryRehydrate` no longer skips IPackedFileData)
-- Create: `test/unit/rehydrate.packed.test.js`
+**文件:**
+- 修改: `src/core/cocos3x/rehydrate.js`（导出多 section rehydrate）
+- 修改: `src/core/cocos3x/engine3x.js`（`tryRehydrate` 不再跳过 IPackedFileData）
+- 创建: `test/unit/rehydrate.packed.test.js`
 
-The current code at `engine3x.js:599-609` returns `null` for IPackedFileData; the splicing logic already exists at `extractPackSection` (594-596) but is only called for the single-asset pack-index path. We need a function that takes a full IPackedFileData and emits a rehydrated array of sections (one per asset), each in the same source-format shape rehydrate currently produces for a standalone IFileData.
+`engine3x.js:599-609` 处当前对 IPackedFileData 返回 `null`；splicing 逻辑已存在于 `extractPackSection`（594-596），但只在单资源 pack-index 路径中调用。我们需要一个函数：接收完整 IPackedFileData，并发出每个 asset 一份的 rehydrated section 数组，每份与 rehydrate 当前对独立 IFileData 产出的 source-format 形状一致。
 
-**Step 1: Failing test.**
+**Step 1: 失败测试。**
 
-`test/unit/rehydrate.packed.test.js`:
+`test/unit/rehydrate.packed.test.js`：
 ```js
 import { describe, it, expect } from 'vitest';
 import { rehydrateIPackedFileData } from '../../src/core/cocos3x/rehydrate.js';
@@ -379,11 +379,11 @@ describe('rehydrateIPackedFileData', () => {
 });
 ```
 
-**Step 2: Run, expect failure (export missing).**
+**Step 2: 运行，预期失败（导出缺失）。**
 
-**Step 3: Implement in `rehydrate.js`.**
+**Step 3: 在 `rehydrate.js` 中实现。**
 
-After `rehydrateIFileData` add:
+在 `rehydrateIFileData` 之后添加：
 ```js
 /**
  * Rehydrate an IPackedFileData (a multi-section pack) by splicing the shared
@@ -448,9 +448,9 @@ module.exports = {
 };
 ```
 
-**Step 4: Wire `engine3x.tryRehydrate`.**
+**Step 4: 接入 `engine3x.tryRehydrate`。**
 
-Change the IPackedFileData skip (`engine3x.js:602-604`) to delegate:
+将 IPackedFileData 跳过分支（`engine3x.js:602-604`）改为转发：
 ```js
 function tryRehydrate(doc) {
   try {
@@ -473,12 +473,12 @@ function tryRehydrate(doc) {
 }
 ```
 
-Add the import at the top of `engine3x.js`:
+在 `engine3x.js` 顶部添加 import：
 ```js
 const { rehydrateIFileData, rehydrateIPackedFileData } = require('./rehydrate');
 ```
 
-**Step 5: Tests pass + integration regression check.**
+**Step 5: 测试通过 + 集成回归检查。**
 
 ```bash
 npm test -- rehydrate.packed
@@ -486,7 +486,7 @@ npm test                                # ≥19 passed
 npm test -- recovery-report             # zqndtz still produces report
 ```
 
-**Step 6: Commit.**
+**Step 6: 提交。**
 
 ```
 feat(3x): full IPackedFileData rehydrate (R6)
@@ -498,17 +498,17 @@ feat(3x): full IPackedFileData rehydrate (R6)
 
 ---
 
-## Task 3: R7 — TypedArray DataTypeID coverage
+## Task 3: R7 — TypedArray DataTypeID 覆盖
 
-**Files:**
-- Modify: `src/core/cocos3x/rehydrate.js` (`DataTypeID` enum + `assignByType` switch)
-- Create: `test/unit/rehydrate.typedarray.test.js`
+**文件:**
+- 修改: `src/core/cocos3x/rehydrate.js`（`DataTypeID` 枚举 + `assignByType` switch）
+- 创建: `test/unit/rehydrate.typedarray.test.js`
 
-In current cocos-engine, `DataTypeID.TypedArray = 13` and `DataTypeID.TypedArray_Class = 14`. Encoded form: `[ctorTag, base64String]` where ctorTag is an index into `[Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, Uint8ClampedArray]`. We don't need to allocate real TypedArrays — for source-format JSON we emit `{ __type__: '<TypedArrayCtor>', __data__: '<base64>' }` so downstream tooling round-trips it.
+当前 cocos-engine 中 `DataTypeID.TypedArray = 13`、`DataTypeID.TypedArray_Class = 14`。编码形式：`[ctorTag, base64String]`，其中 ctorTag 是 `[Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, Uint8ClampedArray]` 的下标。我们不需要分配真正的 TypedArray — 对源格式 JSON 我们发出 `{ __type__: '<TypedArrayCtor>', __data__: '<base64>' }`，让下游工具能 round-trip。
 
-**Step 1: Failing test.**
+**Step 1: 失败测试。**
 
-`test/unit/rehydrate.typedarray.test.js`:
+`test/unit/rehydrate.typedarray.test.js`：
 ```js
 import { describe, it, expect } from 'vitest';
 import { rehydrateIFileData, DataTypeID } from '../../src/core/cocos3x/rehydrate.js';
@@ -573,11 +573,11 @@ describe('TypedArray DataTypeID', () => {
 });
 ```
 
-**Step 2: Run, expect failure (DataTypeID.TypedArray is undefined).**
+**Step 2: 运行，预期失败（DataTypeID.TypedArray 未定义）。**
 
-**Step 3: Implement.**
+**Step 3: 实现。**
 
-In `rehydrate.js` extend `DataTypeID`:
+在 `rehydrate.js` 中扩展 `DataTypeID`：
 ```js
 const DataTypeID = Object.freeze({
   SimpleType: 0,
@@ -613,7 +613,7 @@ function decodeTypedArray(value) {
 }
 ```
 
-Extend `assignByType` switch:
+扩展 `assignByType` switch：
 ```js
 case DataTypeID.TypedArray:
   owner[key] = decodeTypedArray(value);
@@ -627,11 +627,11 @@ case DataTypeID.TypedArray_Class:
   return;
 ```
 
-**Step 4: Tests pass.**
+**Step 4: 测试通过。**
 
-`npm test -- rehydrate.typedarray` → 3 passed. `npm test` overall green (≥22 passed).
+`npm test -- rehydrate.typedarray` → 3 passed。`npm test` 整体绿（≥22 passed）。
 
-**Step 5: Commit.**
+**Step 5: 提交。**
 
 ```
 feat(3x): TypedArray DataTypeID rehydrate (R7)
@@ -643,29 +643,29 @@ feat(3x): TypedArray DataTypeID rehydrate (R7)
 
 ---
 
-## Task 4: R8 — Cross-bundle redirect resolution
+## Task 4: R8 — 跨 bundle 重定向解析
 
-**Files:**
-- Modify: `src/core/cocos3x/engine3x.js` (resolve redirect when an import is missing)
-- Create: `test/unit/redirect.test.js`
-- Create: `test/integration/redirect.test.js`
+**文件:**
+- 修改: `src/core/cocos3x/engine3x.js`（import 缺失时解析 redirect）
+- 创建: `test/unit/redirect.test.js`
+- 创建: `test/integration/redirect.test.js`
 
-### Background
+### 背景
 
-`bundleConfig.parseBundleConfig` already extracts a `redirect: { uuid → depBundleName }` map from `config.json`. Currently nothing in engine3x consults it. When a `paths` entry's import file is missing on disk, the asset is "redirected" to a different bundle (referenced via `cfg.deps`). The engine resolves at runtime by looking up the dep bundle and reading from there.
+`bundleConfig.parseBundleConfig` 已从 `config.json` 提取 `redirect: { uuid → depBundleName }` map。当前 engine3x 中没有任何代码查询它。当某个 `paths` 条目对应的 import 文件在磁盘上缺失时，资源被 "重定向" 到不同的 bundle（通过 `cfg.deps` 引用）。运行时引擎通过查找 dep bundle 并从那里读取来解析。
 
-For unpack we need:
-1. After loading every bundle's config, build a registry `bundleByName: Map<string, BundleConfig>`.
-2. Pass the registry into `unpackBundle` / `unpackAsset`.
-3. When `pathExists(importSrc)` is false AND `cfg.redirect[uuid]` is set AND the dep bundle is present → look up the file in the dep bundle and read from there.
-4. The output asset still belongs to the **current** bundle's output dir (don't move it across bundles — that would change the user's view of the project).
-5. On a successful redirect, log via `logger.debug(\`redirect: [${cfg.name}] ${uuid} -> ${depName}\`)` and add a `report.miss` is wrong here — record it as `report.ok` because the file *was* recovered, just from elsewhere.
+unpack 时我们需要：
+1. 加载完每个 bundle 的 config 后，构建一个 `bundleByName: Map<string, BundleConfig>` registry。
+2. 把 registry 传入 `unpackBundle` / `unpackAsset`。
+3. 当 `pathExists(importSrc)` 为 false 且 `cfg.redirect[uuid]` 已设置且 dep bundle 存在时 → 在 dep bundle 中查找该文件并从那里读取。
+4. 输出资源仍归属**当前** bundle 的输出目录（不要跨 bundle 移动 — 那会改变用户对项目的视图）。
+5. 重定向成功时，通过 `logger.debug(\`redirect: [${cfg.name}] ${uuid} -> ${depName}\`)` 记日志，并加 `report.miss` 是错的 — 应记为 `report.ok`，因为文件*确实*被恢复了，只是从别处。
 
-### Subtask 4.1: helper unit test
+### Subtask 4.1: 辅助函数单元测试
 
-**Step 1: Failing test.**
+**Step 1: 失败测试。**
 
-`test/unit/redirect.test.js`:
+`test/unit/redirect.test.js`：
 ```js
 import { describe, it, expect } from 'vitest';
 import { resolveImportThroughRedirect } from '../../src/core/cocos3x/engine3x.js';
@@ -708,11 +708,11 @@ describe('resolveImportThroughRedirect', () => {
 });
 ```
 
-**Step 2: Run, expect failure (export missing).**
+**Step 2: 运行，预期失败（导出缺失）。**
 
-**Step 3: Implement.**
+**Step 3: 实现。**
 
-In `engine3x.js` add (near `getImportPath` import or below `unpackAsset`):
+在 `engine3x.js` 中添加（靠近 `getImportPath` import 或 `unpackAsset` 下方）：
 ```js
 function resolveImportThroughRedirect(cfg, uuid, registry) {
   const depName = cfg.redirect && cfg.redirect[uuid];
@@ -730,21 +730,21 @@ module.exports = { ...module.exports, resolveImportThroughRedirect };
 // (or extend the existing module.exports list — match whatever pattern engine3x.js uses)
 ```
 
-If `engine3x.js` doesn't currently export anything, add `module.exports = { reverseProject3x, resolveImportThroughRedirect, ... };` keeping existing exports intact. **Read the bottom of engine3x.js first to see actual exports.**
+如果 `engine3x.js` 当前未导出任何东西，添加 `module.exports = { reverseProject3x, resolveImportThroughRedirect, ... };` 保留现有导出完整。**先读 engine3x.js 底部以查看实际导出。**
 
-### Subtask 4.2: build registry + use in unpackAsset
+### Subtask 4.2: 构建 registry + 在 unpackAsset 使用
 
-**Step 4: Modify `reverseProject3x`.**
+**Step 4: 修改 `reverseProject3x`。**
 
-Find where `reverseProject3x` discovers bundles (look for the loop iterating `assets/`, that builds an array of `cfg` objects). After all configs are loaded, build:
+找到 `reverseProject3x` 发现 bundles 的位置（查找遍历 `assets/` 并构建 `cfg` 对象数组的循环）。所有 config 加载完后，构建：
 ```js
 const bundleRegistry = new Map(allConfigs.map(c => [c.name, c]));
 ```
-Pass `bundleRegistry` through to `unpackBundle({ ..., bundleRegistry })` and onward to `unpackAsset({ ..., bundleRegistry })`.
+把 `bundleRegistry` 传入 `unpackBundle({ ..., bundleRegistry })` 并向下传给 `unpackAsset({ ..., bundleRegistry })`。
 
-**Step 5: Modify `unpackAsset`.**
+**Step 5: 修改 `unpackAsset`。**
 
-In `unpackAsset`, after the existing import-source resolution but before the "import not found" path takes over, insert:
+在 `unpackAsset` 中，已有 import 源解析之后但 "import not found" 路径接管之前，插入：
 ```js
 // Cross-bundle redirect: if neither importSrc nor importSrcCcon exists locally
 // but cfg.redirect points to another bundle, read the import from there.
@@ -754,7 +754,7 @@ if (!(await pathExists(importSrc)) && !(await pathExists(importSrcCcon))) {
 }
 ```
 
-Then in the existing `if (await pathExists(importSrc))` chain, add a third branch at the end:
+然后在已有的 `if (await pathExists(importSrc))` 链末尾加第三分支：
 ```js
 } else if (redirectInfo) {
   const candidate = await pathExists(redirectInfo.importJsonPath)
@@ -781,11 +781,11 @@ Then in the existing `if (await pathExists(importSrc))` chain, add a third branc
 }
 ```
 
-### Subtask 4.3: integration test
+### Subtask 4.3: 集成测试
 
-**Step 6: Synthetic two-bundle integration test.**
+**Step 6: 合成两 bundle 集成测试。**
 
-`test/integration/redirect.test.js`:
+`test/integration/redirect.test.js`：
 ```js
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
@@ -867,16 +867,16 @@ describe('integration: cross-bundle redirect', () => {
 });
 ```
 
-(Adapt the test to whatever signature `reverseProject3x` actually accepts — read the file first; the names `sourcePath`/`outputPath` were used in the PR 1 integration test.)
+（按 `reverseProject3x` 实际接收的签名调整测试 — 先读源文件；`sourcePath`/`outputPath` 这些名字曾在 PR 1 集成测试中使用。）
 
-**Step 7: Run + commit.**
+**Step 7: 运行 + 提交。**
 
 ```bash
 npm test -- redirect
 npm test
 ```
 
-Both green. Commit:
+均绿。提交：
 ```
 feat(3x): cross-bundle redirect resolution at unpack time (R8)
 
@@ -889,22 +889,22 @@ feat(3x): cross-bundle redirect resolution at unpack time (R8)
 
 ---
 
-## Task 5: Validate gates for Wave 1
+## Task 5: Wave 1 的 validate gates
 
-**Files:**
-- Create: `src/validate/gates/cconV2.js`
-- Create: `src/validate/gates/typedArrays.js`
-- Modify: `src/validate/index.js` (register both)
-- Create: `test/unit/validate.cconV2.test.js`
-- Create: `test/unit/validate.typedArrays.test.js`
+**文件:**
+- 创建: `src/validate/gates/cconV2.js`
+- 创建: `src/validate/gates/typedArrays.js`
+- 修改: `src/validate/index.js`（注册两者）
+- 创建: `test/unit/validate.cconV2.test.js`
+- 创建: `test/unit/validate.typedArrays.test.js`
 
-Two gates to make Wave 1 work observable in the validate runner.
+两个 gate，让 Wave 1 工作在 validate 运行器中可观测。
 
 ### Gate A: `cconV2`
 
-Counts `*.ccon-v2.rawjson` files in the output directory. Passing condition: zero files (i.e. every CCON v2 was successfully decoded). On a fixture with a known undecodable file we'd expect this to fail — the gate's purpose is to surface regressions.
+统计输出目录中的 `*.ccon-v2.rawjson` 文件。通过条件：零文件（即每个 CCON v2 都被成功解码）。在已知存在不可解码文件的 fixture 上预期它失败 — 这个 gate 的目的是暴露回归。
 
-`src/validate/gates/cconV2.js`:
+`src/validate/gates/cconV2.js`：
 ```js
 const fs = require('fs');
 const path = require('path');
@@ -926,9 +926,9 @@ function walk(dir, visit) {
 
 ### Gate B: `typedArrays`
 
-Greps the rehydrated JSON for `__type__":"<TypedArrayCtor>"` markers and returns the count. Returns `true` always (informational), but encodes the count in the detail. Used to verify that the typed-array path was exercised at all on a sample.
+在 rehydrated JSON 中 grep `__type__":"<TypedArrayCtor>"` 标记并返回数量。始终返回 `true`（信息性），但在 detail 中编码数量。用于验证某样本上是否触发了 typed-array 路径。
 
-`src/validate/gates/typedArrays.js`:
+`src/validate/gates/typedArrays.js`：
 ```js
 const fs = require('fs');
 const path = require('path');
@@ -954,11 +954,11 @@ function walk(dir, visit) {
 }
 ```
 
-(If you want the count visible, return `{ ok: true, count }` — but `runGates` currently expects strict `true`. To stay compatible, log via `console.error` at a higher level, or extend `runGates` to allow `{ ok: true, detail }`. **For this PR, keep it simple: return `true` and skip the count in the JSON — we'll richen `runGates` in PR 5.**)
+（如果想让 count 可见，可返回 `{ ok: true, count }` — 但 `runGates` 当前严格期待 `true`。为兼容性起见，可通过 `console.error` 在更高层记录，或扩展 `runGates` 接受 `{ ok: true, detail }`。**本 PR 保持简单：返回 `true` 并在 JSON 中跳过 count — 在 PR 5 中再丰富 `runGates`。**）
 
-### Subtask 5.1: tests + register
+### Subtask 5.1: 测试 + 注册
 
-`test/unit/validate.cconV2.test.js`:
+`test/unit/validate.cconV2.test.js`：
 ```js
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
@@ -981,7 +981,7 @@ describe('validate gate: cconV2', () => {
 });
 ```
 
-`test/unit/validate.typedArrays.test.js`:
+`test/unit/validate.typedArrays.test.js`：
 ```js
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
@@ -999,7 +999,7 @@ describe('validate gate: typedArrays', () => {
 });
 ```
 
-Register in `src/validate/index.js`:
+在 `src/validate/index.js` 中注册：
 ```js
 const recoveryReport = require('./gates/recoveryReport');
 const cconV2         = require('./gates/cconV2');
@@ -1007,7 +1007,7 @@ const typedArrays    = require('./gates/typedArrays');
 const ALL = { recoveryReport, cconV2, typedArrays };
 ```
 
-**Run + commit:**
+**运行 + 提交：**
 
 ```bash
 npm test
@@ -1022,11 +1022,11 @@ feat(validate): cconV2 + typedArrays gates for Wave 1
 
 ---
 
-## Task 6: PR-close — CHANGELOG, README, push, PR
+## Task 6: PR 收尾 — CHANGELOG、README、push、PR
 
-**Step 1: CHANGELOG.**
+**Step 1: CHANGELOG。**
 
-Prepend under `## [Unreleased]`:
+在 `## [Unreleased]` 下前置：
 ```md
 ### Added (PR 2, Wave 1)
 - R5: CCON v2 (notepack) decoder — `.cconb` files at version 2 now produce real documents.
@@ -1036,11 +1036,11 @@ Prepend under `## [Unreleased]`:
 - Validate gates: `cconV2`, `typedArrays`.
 ```
 
-**Step 2: README.**
+**Step 2: README。**
 
-Append a row to whatever Wave-status table exists, or under the "Validation" subsection added in PR 1, list the new gates.
+向已存在的 Wave 状态表追加一行，或在 PR 1 中新增的 "Validation" 子章节下列出新 gates。
 
-**Step 3: Verify all green.**
+**Step 3: 验证全绿。**
 
 ```bash
 npm test
@@ -1048,7 +1048,7 @@ npm test -- recovery-report   # zqndtz still green
 node bin/validate.js <some-zqndtz-output>
 ```
 
-**Step 4: Commit docs, push, open PR.**
+**Step 4: 提交文档、推送、开 PR。**
 
 ```bash
 git add CHANGELOG.md README.md
@@ -1063,7 +1063,7 @@ gh pr create --repo clawnet-ai/cc-reverse --base main \
   --body "<see template below>"
 ```
 
-PR body template:
+PR body 模板：
 ```md
 ## Summary
 
@@ -1088,7 +1088,7 @@ Wave 1 of the 3.x overhaul. Closes the four remaining deserialization gaps docum
 - Script recovery layers — PR 3+
 ```
 
-**Step 5: Cleanup after merge.**
+**Step 5: 合并后清理。**
 
 ```bash
 cd /Users/lcf/code/cc-reverse
@@ -1101,9 +1101,9 @@ git branch -d feature/pr2-wave1-3x-deserialize
 
 ---
 
-## Out of scope (kept honest)
+## 范围外（如实交代）
 
-- Wave 2 (R9–R12) — next PR
-- Script recovery (Layer 1–7) — PR 3+
-- 2.x parity for any of the above — next round (`NEXT-ROUND-2x-backlog.md`)
-- Streaming notepack parser for very large packs (current decoder loads whole buffer into memory; OK for 3.x asset bundles, all under 10 MB in practice)
+- Wave 2 (R9–R12) — 下一个 PR
+- 脚本恢复 (Layer 1–7) — PR 3+
+- 上述任何条目的 2.x 对等 — 下一轮（`NEXT-ROUND-2x-backlog.md`）
+- 超大 pack 的流式 notepack 解析器（当前解码器把整个 buffer 一次加载到内存；对于 3.x 资源 bundle 没问题，实践中均小于 10 MB）

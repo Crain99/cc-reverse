@@ -1,51 +1,51 @@
-# PR 3 — Script Recovery Layers 1-3 (webcrack integration) Implementation Plan
+# PR 3 — 脚本恢复 Layer 1-3 (webcrack 集成) 实现计划
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Take 3.x `src/chunks/*.js` (System.register bundles) and emit one ESM module per registered class, with `__extends`/`__decorate` collapsed back to native `class` + decorator syntax. This is layers 1-3 of the 7-layer script recovery pipeline (Layer 4-6 follow in PR 4, Layer 7 humanify in PR 5).
+**目标:** 把 3.x `src/chunks/*.js`（System.register bundles）切分为每个注册类一份 ESM 模块，并将 `__extends`/`__decorate` 折回到原生 `class` + 装饰器语法。这是 7 层脚本恢复管线中的 Layer 1-3（Layer 4-6 在 PR 4，Layer 7 humanify 在 PR 5）。
 
-**Architecture:**
-- New module tree under `src/core/cocos3x/scriptRecovery/` with one file per layer (`chunkSplitter`, `esmRebuilder`, `classRestorer`) plus `pipeline.js` that drives them.
-- AST-first: each layer accepts and returns `@babel/types` AST nodes. We re-parse only at the input boundary (raw bundle text) and stringify only at the final emit.
-- **Fail-closed**: any layer crash → downstream uses upstream output → worst case is the current behavior (raw chunk copy).
-- webcrack is invoked as a Node API (not the CLI) to do the bulk lifting in Layer 1 and assist Layer 2/3. Cocos-specific shapes (`System.register([...deps], function(_export, _context){ setters: ..., execute: ...})`) are handled by us; webcrack's own `unminify` pass cleans up the IIFE detritus.
-- Output co-exists with the legacy raw copy: layer pipeline writes to `assets/scripts/` (TS-style tree, even though .js for now), legacy copy still writes to `assets/Scripts/`. PR 5's Layer 6 will own emitting `.ts` + tsconfig and PR 5 will retire the legacy path.
+**架构:**
+- `src/core/cocos3x/scriptRecovery/` 下新模块树，每层一个文件（`chunkSplitter`、`esmRebuilder`、`classRestorer`），以及驱动它们的 `pipeline.js`。
+- AST 优先：每层接收并返回 `@babel/types` AST 节点。仅在输入边界（原始 bundle 文本）重新 parse，仅在最终发出时 stringify。
+- **Fail-closed**：任何层崩溃 → 下游使用上游输出 → 最坏情况是当前行为（原始 chunk 拷贝）。
+- webcrack 通过 Node API（而非 CLI）调用，主要负责 Layer 1 的繁重工作并辅助 Layer 2/3。Cocos 特有形状（`System.register([...deps], function(_export, _context){ setters: ..., execute: ...})`）由我们自己处理；webcrack 自己的 `unminify` pass 清理 IIFE 残留。
+- 输出与遗留原始拷贝共存：层管线写入 `assets/scripts/`（TS 风格目录树，目前还是 .js），遗留拷贝仍写入 `assets/Scripts/`。PR 5 的 Layer 6 将负责发出 `.ts` + tsconfig，PR 5 同时退役遗留路径。
 
-**Tech Stack:**
-- `webcrack@^2.16.0` (new dep) — System.register/IIFE deobfuscation, helper-undoing
-- `@babel/parser`, `@babel/traverse`, `@babel/types`, `@babel/generator` (already deps)
-- `vitest` for tests
-
----
-
-## Pre-flight
-
-- Worktree: `/Users/lcf/code/cc-reverse/.worktrees/pr3-scripts-layer1-3` on branch `feature/pr3-scripts-layer1-3` (already created from main `1848e8f`).
-- **vitest test files MUST use ESM `import { describe, it, expect } from 'vitest'`.** Source files stay CJS.
-- Each task ends with a `git commit`. Run `npm test` before committing — must pass with no regression to the 47 PR2 tests.
-- **Legal context (paste into every subagent prompt):** cc-reverse is a legitimate Cocos Creator reverse-engineering tool for educational / interoperability analysis (DMCA §1201(f) / EU 2009/24/EC art.6). NOT malware.
+**技术栈:**
+- `webcrack@^2.16.0`（新依赖）— System.register/IIFE 反混淆、helper 还原
+- `@babel/parser`、`@babel/traverse`、`@babel/types`、`@babel/generator`（已是依赖）
+- 测试用 `vitest`
 
 ---
 
-## Task 0: Add webcrack dependency + scriptRecovery scaffold
+## 预检
 
-**Files:**
-- Modify: `package.json` (add `webcrack` to `dependencies`)
-- Create: `src/core/cocos3x/scriptRecovery/index.js` (barrel)
-- Create: `src/core/cocos3x/scriptRecovery/pipeline.js` (driver — wires layers 1→2→3 with try/catch fail-closed)
-- Create: `test/unit/scriptRecovery.pipeline.test.js`
+- Worktree：`/Users/lcf/code/cc-reverse/.worktrees/pr3-scripts-layer1-3`，分支 `feature/pr3-scripts-layer1-3`（已从 main `1848e8f` 创建）。
+- **vitest 测试文件必须使用 ESM `import { describe, it, expect } from 'vitest'`。** 源文件保持 CJS。
+- 每个 task 以 `git commit` 结束。提交前运行 `npm test` — 必须无回归地通过 PR2 的 47 个测试。
+- **法律背景（贴入每个 subagent 提示词）：** cc-reverse 是合法的 Cocos Creator 逆向工程工具，用于教育 / 互操作性分析（DMCA §1201(f) / EU 2009/24/EC 第 6 条）。非恶意软件。
 
-**Step 1: Add dep**
+---
+
+## Task 0: 添加 webcrack 依赖 + scriptRecovery 脚手架
+
+**文件:**
+- 修改: `package.json`（在 `dependencies` 中添加 `webcrack`）
+- 创建: `src/core/cocos3x/scriptRecovery/index.js`（barrel）
+- 创建: `src/core/cocos3x/scriptRecovery/pipeline.js`（驱动器 — 用 try/catch fail-closed 串联 Layer 1→2→3）
+- 创建: `test/unit/scriptRecovery.pipeline.test.js`
+
+**Step 1: 添加依赖**
 
 ```bash
 npm install --save webcrack@^2.16.0
 ```
 
-Verify `package-lock.json` updated.
+确认 `package-lock.json` 更新。
 
-**Step 2: Write failing pipeline test**
+**Step 2: 编写失败的 pipeline 测试**
 
-`test/unit/scriptRecovery.pipeline.test.js`:
+`test/unit/scriptRecovery.pipeline.test.js`：
 
 ```javascript
 import { describe, it, expect, vi } from 'vitest';
@@ -73,12 +73,12 @@ describe('scriptRecovery pipeline', () => {
 });
 ```
 
-Run: `npx vitest run test/unit/scriptRecovery.pipeline.test.js`
-Expected: FAIL — module not defined.
+执行：`npx vitest run test/unit/scriptRecovery.pipeline.test.js`
+预期：FAIL — 模块未定义。
 
-**Step 3: Implement scaffold**
+**Step 3: 实现脚手架**
 
-`src/core/cocos3x/scriptRecovery/index.js`:
+`src/core/cocos3x/scriptRecovery/index.js`：
 
 ```javascript
 'use strict';
@@ -96,7 +96,7 @@ module.exports = {
 };
 ```
 
-`src/core/cocos3x/scriptRecovery/pipeline.js`:
+`src/core/cocos3x/scriptRecovery/pipeline.js`：
 
 ```javascript
 'use strict';
@@ -146,21 +146,21 @@ async function runScriptRecoveryPipeline(input) {
 module.exports = { runScriptRecoveryPipeline };
 ```
 
-Stub the 3 layer files (`chunkSplitter.js`, `esmRebuilder.js`, `classRestorer.js`) each exporting an async fn that returns its input unchanged. Real implementations come in Tasks 1-3.
+为 3 个层文件（`chunkSplitter.js`、`esmRebuilder.js`、`classRestorer.js`）创建桩，每个导出一个原样返回输入的 async 函数。真正实现见 Task 1-3。
 
-For `chunkSplitter` stub specifically — return `[{name: chunk.name, source: chunk.source, ast: null}]` (one module per chunk) so the empty-array and crash test pass.
+特别地，`chunkSplitter` 桩应返回 `[{name: chunk.name, source: chunk.source, ast: null}]`（每个 chunk 一个模块），让空数组和崩溃测试通过。
 
-**Step 4: Run test**
+**Step 4: 运行测试**
 
 `npx vitest run test/unit/scriptRecovery.pipeline.test.js`
-Expected: PASS (2 tests)
+预期：PASS（2 tests）
 
-**Step 5: Run full suite**
+**Step 5: 运行完整套件**
 
 `npm test`
-Expected: PASS — 47 baseline + 2 new = 49 tests.
+预期：PASS — 47 baseline + 2 new = 49 tests。
 
-**Step 6: Commit**
+**Step 6: 提交**
 
 ```bash
 git add package.json package-lock.json src/core/cocos3x/scriptRecovery/ test/unit/scriptRecovery.pipeline.test.js
@@ -169,16 +169,16 @@ git commit -m "chore(3x): add webcrack dep + scriptRecovery pipeline scaffold"
 
 ---
 
-## Task 1: Layer 1 — chunkSplitter (System.register parsing)
+## Task 1: Layer 1 — chunkSplitter（System.register parsing）
 
-**Files:**
-- Modify: `src/core/cocos3x/scriptRecovery/chunkSplitter.js` (real implementation)
-- Create: `test/unit/scriptRecovery.chunkSplitter.test.js`
-- Create: `test/fixtures/scriptRecovery/system-register-2-modules.js` (synthetic)
+**文件:**
+- 修改: `src/core/cocos3x/scriptRecovery/chunkSplitter.js`（真实实现）
+- 创建: `test/unit/scriptRecovery.chunkSplitter.test.js`
+- 创建: `test/fixtures/scriptRecovery/system-register-2-modules.js`（合成）
 
-**Step 1: Write fixture + failing test**
+**Step 1: 编写 fixture + 失败测试**
 
-`test/fixtures/scriptRecovery/system-register-2-modules.js`:
+`test/fixtures/scriptRecovery/system-register-2-modules.js`：
 
 ```javascript
 System.register("chunks:///_virtual/Player.ts", ["cc"], function (_export, _context) {
@@ -203,7 +203,7 @@ System.register("chunks:///_virtual/Enemy.ts", ["cc", "./Player"], function (_ex
 });
 ```
 
-`test/unit/scriptRecovery.chunkSplitter.test.js`:
+`test/unit/scriptRecovery.chunkSplitter.test.js`：
 
 ```javascript
 import { describe, it, expect } from 'vitest';
@@ -248,12 +248,12 @@ describe('Layer 1: chunkSplitter', () => {
 });
 ```
 
-Run: `npx vitest run test/unit/scriptRecovery.chunkSplitter.test.js`
-Expected: FAIL.
+执行：`npx vitest run test/unit/scriptRecovery.chunkSplitter.test.js`
+预期：FAIL。
 
-**Step 2: Implement chunkSplitter**
+**Step 2: 实现 chunkSplitter**
 
-`src/core/cocos3x/scriptRecovery/chunkSplitter.js`:
+`src/core/cocos3x/scriptRecovery/chunkSplitter.js`：
 
 ```javascript
 'use strict';
@@ -404,26 +404,26 @@ function parseSetters(arrayExpr) {
 module.exports = { splitChunks };
 ```
 
-**Note:** the test expects `setterBindings[i].dep` to be the dep string. Update `splitChunks` after the `parseSetters` call so each entry's `.dep = deps[entry._index]` then drop `_index`. Add this at the top of the result construction:
+**注意：** 测试期望 `setterBindings[i].dep` 为 dep 字符串。在 `parseSetters` 调用之后更新 `splitChunks`，让每个条目的 `.dep = deps[entry._index]`，然后丢弃 `_index`。在结果构造顶部添加：
 
 ```javascript
 const setterBindings = result.setterBindings.map((s) => ({ dep: deps[s._index], bindings: s.bindings }));
 modules.push({ name: modName, registerId, deps, setterBindings, ast: result.bodyAst, source });
 ```
 
-Replace the previous `setterBindings: result.setterBindings,` line accordingly.
+相应地替换前面的 `setterBindings: result.setterBindings,` 这行。
 
-**Step 3: Run test**
+**Step 3: 运行测试**
 
 `npx vitest run test/unit/scriptRecovery.chunkSplitter.test.js`
-Expected: PASS (3 tests).
+预期：PASS（3 tests）。
 
-**Step 4: Run full suite**
+**Step 4: 完整套件**
 
 `npm test`
-Expected: 49 baseline + 3 new = 52 passing.
+预期：49 baseline + 3 new = 52 passing。
 
-**Step 5: Commit**
+**Step 5: 提交**
 
 ```bash
 git add src/core/cocos3x/scriptRecovery/chunkSplitter.js test/unit/scriptRecovery.chunkSplitter.test.js test/fixtures/scriptRecovery/system-register-2-modules.js
@@ -432,13 +432,13 @@ git commit -m "feat(3x/scripts): Layer 1 chunkSplitter — System.register parsi
 
 ---
 
-## Task 2: Layer 2 — esmRebuilder (setters / _export → import / export)
+## Task 2: Layer 2 — esmRebuilder（setters / _export → import / export）
 
-**Files:**
-- Modify: `src/core/cocos3x/scriptRecovery/esmRebuilder.js`
-- Create: `test/unit/scriptRecovery.esmRebuilder.test.js`
+**文件:**
+- 修改: `src/core/cocos3x/scriptRecovery/esmRebuilder.js`
+- 创建: `test/unit/scriptRecovery.esmRebuilder.test.js`
 
-**Step 1: Failing test**
+**Step 1: 失败测试**
 
 ```javascript
 import { describe, it, expect } from 'vitest';
@@ -485,11 +485,11 @@ describe('Layer 2: esmRebuilder', () => {
 });
 ```
 
-Run: FAIL.
+执行：FAIL。
 
-**Step 2: Implement**
+**Step 2: 实现**
 
-`src/core/cocos3x/scriptRecovery/esmRebuilder.js`:
+`src/core/cocos3x/scriptRecovery/esmRebuilder.js`：
 
 ```javascript
 'use strict';
@@ -585,17 +585,17 @@ async function rebuildEsm(ast, mod) {
 module.exports = { rebuildEsm };
 ```
 
-**Step 3: Run test**
+**Step 3: 运行测试**
 
 `npx vitest run test/unit/scriptRecovery.esmRebuilder.test.js`
-Expected: PASS (3 tests).
+预期：PASS（3 tests）。
 
-**Step 4: Full suite**
+**Step 4: 完整套件**
 
 `npm test`
-Expected: 52 + 3 = 55 passing.
+预期：52 + 3 = 55 passing。
 
-**Step 5: Commit**
+**Step 5: 提交**
 
 ```bash
 git add src/core/cocos3x/scriptRecovery/esmRebuilder.js test/unit/scriptRecovery.esmRebuilder.test.js
@@ -604,25 +604,25 @@ git commit -m "feat(3x/scripts): Layer 2 esmRebuilder — setters/_export → im
 
 ---
 
-## Task 3: Layer 3 — classRestorer (`__extends` / `__decorate` undoing via webcrack)
+## Task 3: Layer 3 — classRestorer（通过 webcrack 还原 `__extends` / `__decorate`）
 
-**Files:**
-- Modify: `src/core/cocos3x/scriptRecovery/classRestorer.js`
-- Create: `test/unit/scriptRecovery.classRestorer.test.js`
+**文件:**
+- 修改: `src/core/cocos3x/scriptRecovery/classRestorer.js`
+- 创建: `test/unit/scriptRecovery.classRestorer.test.js`
 
-**Background:** Cocos's tsc-targeted ES5 emit produces:
+**背景：** Cocos 的 tsc-targeted ES5 输出会产生：
 ```javascript
 var Player = (function (_super) { __extends(Player, _super); function Player(){ ... } return Player; }(Component));
 Player = __decorate([ ccclass('Player') ], Player);
 ```
-Layer 3 rewrites this into:
+Layer 3 把它改写为：
 ```javascript
 @ccclass('Player')
 class Player extends Component { constructor(){ ... } }
 ```
-The TypeScript helper undoing is exactly what webcrack's `unminify` pass already does. We feed it the program-source post-Layer-2 and let it transform the AST.
+TypeScript helper 还原正是 webcrack 的 `unminify` pass 已经做的事情。我们把 Layer 2 之后的程序源喂给它，让它转换 AST。
 
-**Step 1: Failing test**
+**Step 1: 失败测试**
 
 ```javascript
 import { describe, it, expect } from 'vitest';
@@ -672,11 +672,11 @@ describe('Layer 3: classRestorer', () => {
 });
 ```
 
-Run: FAIL.
+执行：FAIL。
 
-**Step 2: Implement (webcrack-driven, with hand-rolled __decorate folding)**
+**Step 2: 实现（webcrack 驱动 + 手写 __decorate 折叠）**
 
-`src/core/cocos3x/scriptRecovery/classRestorer.js`:
+`src/core/cocos3x/scriptRecovery/classRestorer.js`：
 
 ```javascript
 'use strict';
@@ -785,17 +785,17 @@ function unwrapClassDecl(stmt) {
 module.exports = { restoreClasses };
 ```
 
-**Step 3: Run test**
+**Step 3: 运行测试**
 
 `npx vitest run test/unit/scriptRecovery.classRestorer.test.js`
-Expected: PASS. **If a webcrack version difference produces a slightly different `class` shape**, adjust the regex in the assertions (not the code) — the goal is "class with extends + method", not exact spacing.
+预期：PASS。**如果 webcrack 版本差异产生稍不同的 `class` 形状**，调整断言中的正则（不要改代码）— 目标是 "class with extends + method"，而非精确空格。
 
-**Step 4: Full suite**
+**Step 4: 完整套件**
 
 `npm test`
-Expected: 55 + 3 = 58 passing.
+预期：55 + 3 = 58 passing。
 
-**Step 5: Commit**
+**Step 5: 提交**
 
 ```bash
 git add src/core/cocos3x/scriptRecovery/classRestorer.js test/unit/scriptRecovery.classRestorer.test.js
@@ -804,17 +804,17 @@ git commit -m "feat(3x/scripts): Layer 3 classRestorer — __extends/__decorate 
 
 ---
 
-## Task 4: Wire pipeline into engine3x.recoverScripts (additive, opt-in)
+## Task 4: 把 pipeline 接入 engine3x.recoverScripts（增量、可选）
 
-**Files:**
-- Modify: `src/core/cocos3x/engine3x.js`
-- Create: `test/integration/scriptRecovery.test.js`
+**文件:**
+- 修改: `src/core/cocos3x/engine3x.js`
+- 创建: `test/integration/scriptRecovery.test.js`
 
-**Goal:** When recovering scripts, also produce a layered output under `assets/scripts/<bundle>/<module>.js`. The legacy raw copy under `assets/Scripts/` stays in place so PR 3 cannot regress current users. Layered output is written **only** when at least one chunk parses to ≥1 System.register module — silently skipped otherwise so vanilla 2.x or non-System bundles aren't affected.
+**目标：** 恢复脚本时，同时在 `assets/scripts/<bundle>/<module>.js` 下生成分层输出。`assets/Scripts/` 下的遗留原始拷贝保持不动，使 PR 3 不会让现有用户回归。仅当至少有一个 chunk 解析为 ≥1 System.register 模块时才写入分层输出 — 否则静默跳过，不影响 vanilla 2.x 或非 System bundle。
 
-**Step 1: Failing integration test**
+**Step 1: 失败的集成测试**
 
-`test/integration/scriptRecovery.test.js`:
+`test/integration/scriptRecovery.test.js`：
 
 ```javascript
 import { describe, it, expect } from 'vitest';
@@ -857,19 +857,19 @@ describe('Layered script recovery (integration)', () => {
 });
 ```
 
-Run: FAIL — `recoverScriptsLayered` not exported.
+执行：FAIL — `recoverScriptsLayered` 未导出。
 
-**Step 2: Implement wrapper + wire into recoverScripts**
+**Step 2: 实现包装器 + 接入 recoverScripts**
 
-In `src/core/cocos3x/engine3x.js`:
+在 `src/core/cocos3x/engine3x.js` 中：
 
-1. Add near the top with other requires:
+1. 在文件顶部其它 require 旁边添加：
 ```javascript
 const { runScriptRecoveryPipeline } = require('./scriptRecovery');
 const generate = require('@babel/generator').default;
 ```
 
-2. Add a new top-level function (above `recoverScripts`):
+2. 添加新顶层函数（在 `recoverScripts` 之上）：
 
 ```javascript
 /**
@@ -915,7 +915,7 @@ async function recoverScriptsLayered(sourcePath, outputPath, verbose) {
 }
 ```
 
-3. At the bottom of `recoverScripts`, before `return { total }`, add the layered call (best-effort, never throws upward):
+3. 在 `recoverScripts` 末尾、`return { total }` 之前，加入 layered 调用（best-effort，绝不向上抛出）：
 
 ```javascript
 try {
@@ -928,19 +928,19 @@ try {
 }
 ```
 
-4. Export `recoverScriptsLayered` in the existing `module.exports = { ... }` block.
+4. 在已有的 `module.exports = { ... }` 块中导出 `recoverScriptsLayered`。
 
-**Step 3: Run test**
+**Step 3: 运行测试**
 
 `npx vitest run test/integration/scriptRecovery.test.js`
-Expected: PASS.
+预期：PASS。
 
-**Step 4: Full suite**
+**Step 4: 完整套件**
 
 `npm test`
-Expected: 58 + 1 = 59 passing.
+预期：58 + 1 = 59 passing。
 
-**Step 5: Commit**
+**Step 5: 提交**
 
 ```bash
 git add src/core/cocos3x/engine3x.js test/integration/scriptRecovery.test.js
@@ -949,16 +949,16 @@ git commit -m "feat(3x): wire script recovery pipeline into engine3x (layered ou
 
 ---
 
-## Task 5: validate gate — `layeredScripts` (informational)
+## Task 5: validate gate — `layeredScripts`（信息性）
 
-**Files:**
-- Create: `src/validate/gates/layeredScripts.js`
-- Modify: `src/validate/index.js`
-- Modify: `test/unit/validate.gates.test.js` (add 2 cases)
+**文件:**
+- 创建: `src/validate/gates/layeredScripts.js`
+- 修改: `src/validate/index.js`
+- 修改: `test/unit/validate.gates.test.js`（新增 2 个 case）
 
-**Step 1: Failing test**
+**Step 1: 失败测试**
 
-Append to `test/unit/validate.gates.test.js`:
+追加到 `test/unit/validate.gates.test.js`：
 
 ```javascript
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -982,11 +982,11 @@ describe('layeredScripts gate', () => {
 });
 ```
 
-Run: FAIL.
+执行：FAIL。
 
-**Step 2: Implement gate**
+**Step 2: 实现 gate**
 
-`src/validate/gates/layeredScripts.js`:
+`src/validate/gates/layeredScripts.js`：
 
 ```javascript
 'use strict';
@@ -1026,14 +1026,14 @@ module.exports = function layeredScripts(outDir) {
 };
 ```
 
-Register in `src/validate/index.js` ALL block.
+在 `src/validate/index.js` 的 ALL 块中注册。
 
-**Step 3: Run tests**
+**Step 3: 运行测试**
 
 `npm test`
-Expected: 59 + 2 = 61 passing.
+预期：59 + 2 = 61 passing。
 
-**Step 4: Commit**
+**Step 4: 提交**
 
 ```bash
 git add src/validate/gates/layeredScripts.js src/validate/index.js test/unit/validate.gates.test.js
@@ -1042,15 +1042,15 @@ git commit -m "feat(validate): layeredScripts gate (informational)"
 
 ---
 
-## Task 6: CHANGELOG, README, push, PR
+## Task 6: CHANGELOG、README、push、PR
 
-**Files:**
-- Modify: `CHANGELOG.md` (new entry at top)
-- Modify: `README.md` (3.x script recovery section)
+**文件:**
+- 修改: `CHANGELOG.md`（在顶部添加新条目）
+- 修改: `README.md`（3.x 脚本恢复部分）
 
 **Step 1: CHANGELOG**
 
-Add at top of `CHANGELOG.md`:
+在 `CHANGELOG.md` 顶部添加：
 
 ```markdown
 ## PR 3 — Wave / Script Recovery Layers 1-3 (webcrack integration)
@@ -1066,7 +1066,7 @@ Add at top of `CHANGELOG.md`:
 
 **Step 2: README**
 
-Find the "3.x" or "Script recovery" section and add a paragraph:
+找到 "3.x" 或 "Script recovery" 一节，添加段落：
 
 ```markdown
 ### Script recovery (3.x)
@@ -1080,19 +1080,19 @@ In addition to the legacy raw chunk copy under `assets/Scripts/`, the unpacker n
 Future PRs add Layer 4 (ccclass naming + UUID mapping), Layer 5 (typed-field inference from scenes), Layer 6 (TS project emission with tsconfig), and Layer 7 (optional humanify pass for minified identifiers).
 ```
 
-**Step 3: Run tests once more**
+**Step 3: 再跑一次测试**
 
 `npm test`
-Expected: 61 passing.
+预期：61 passing。
 
-**Step 4: Commit**
+**Step 4: 提交**
 
 ```bash
 git add CHANGELOG.md README.md
 git commit -m "docs: changelog + readme for PR 3 script recovery layers 1-3"
 ```
 
-**Step 5: Push and PR**
+**Step 5: Push 与 PR**
 
 ```bash
 git push -u origin feature/pr3-scripts-layer1-3
@@ -1134,13 +1134,13 @@ EOF
 )"
 ```
 
-Report back with the PR URL.
+回报 PR URL。
 
 ---
 
-## Per-task acceptance reminder
+## 每个 task 验收提醒
 
-Before each commit:
-1. Tests for that task pass: `npx vitest run <task-test-file>`
-2. Full suite passes: `npm test` (no regression)
-3. Subagent reports any deviation from this plan in its handoff message.
+每次 commit 之前：
+1. 该 task 的测试通过：`npx vitest run <task-test-file>`
+2. 完整套件通过：`npm test`（无回归）
+3. Subagent 在交接消息中报告任何与本计划的偏差。

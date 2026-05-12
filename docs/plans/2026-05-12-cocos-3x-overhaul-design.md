@@ -1,29 +1,29 @@
-# Cocos Creator 3.x Reverse Engineering Overhaul — Design
+# Cocos Creator 3.x 逆向工程大整改 — 设计
 
-Date: 2026-05-12
-Scope: cc-reverse 3.x pipeline + cocos-reverse-engineering-skill methodology
-Status: Approved (brainstorming complete)
-Out-of-scope: 2.x optimization (deferred to next round, see `NEXT-ROUND-2x-backlog.md`)
+日期: 2026-05-12
+范围: cc-reverse 3.x 管线 + cocos-reverse-engineering-skill 方法论
+状态: 已批准（头脑风暴完成）
+范围外: 2.x 优化（推迟到下一轮，见 `NEXT-ROUND-2x-backlog.md`）
 
-## 1. Goals
+## 1. 目标
 
-Bring 3.x reverse engineering from "structurally hollow" to "production-grade":
+将 3.x 逆向工程从"结构空洞"提升至"生产级"：
 
-1. Real script recovery (not chunk copying) — System.register chunks decompile into a TypeScript project with restored class names, decorators, and inferred field types.
-2. Complete 3.x asset deserialization — CCON v2, IPackedFileData, TypedArray, cross-bundle redirect.
-3. Honest project metadata — generated `project.json` reflects the actual source build instead of hardcoded constants.
-4. Methodology-grade skill — the companion `cocos-reverse-engineering` plugin teaches users *how* to use the output, not just *how to run the tool*.
+1. 真正的脚本恢复（而非 chunk 拷贝）— System.register chunk 反编译为 TypeScript 工程，恢复类名、装饰器、推断字段类型。
+2. 完整的 3.x 资源反序列化 — CCON v2、IPackedFileData、TypedArray、跨 bundle 重定向。
+3. 诚实的工程元数据 — 生成的 `project.json` 反映实际源构建，而非硬编码常量。
+4. 方法论级 skill — 配套 `cocos-reverse-engineering` 插件教用户*如何*使用产物，而不仅是*如何运行工具*。
 
-Non-goals this round:
-- 2.x improvements (will reuse this round's infrastructure next round).
-- Recovering minified variable names without a sourcemap (Layer 7 humanify is opt-in, ships unconfigured).
-- Native binary unpacking (.so / .dll script extraction).
+本轮非目标：
+- 2.x 改进（下一轮复用本轮基础设施）。
+- 在没有 sourcemap 的情况下恢复混淆变量名（Layer 7 humanify 是可选项，发布时不预配置）。
+- 原生二进制解包（.so / .dll 脚本提取）。
 
-## 2. Architecture Overview
+## 2. 架构概览
 
-### 2.1 Script recovery — 7 layers
+### 2.1 脚本恢复 — 7 层
 
-New module tree under `src/core/cocos3x/scriptRecovery/`:
+`src/core/cocos3x/scriptRecovery/` 下的新模块树：
 
 ```
 src/chunks/*.js  ────────┐
@@ -43,21 +43,21 @@ src/chunks/*.js  ────────┐
   Layer 7  humanify           [opt-in] minified-name renaming via humanify CLI
 ```
 
-Each layer:
-- Accepts and returns Babel AST (no re-parse between layers).
-- Fails closed: layer crash → downstream uses upstream output → worst case is current behaviour (raw chunk copy).
-- Toggleable via `--script-layers <1-7>`.
+每一层：
+- 接收并返回 Babel AST（层间不重新解析）。
+- Fail closed：某层崩溃 → 下游使用上游输出 → 最坏情况退化为当前行为（原始 chunk 拷贝）。
+- 可通过 `--script-layers <1-7>` 切换。
 
-External tools we lean on (avoid reinventing):
-- `webcrack` — drives Layer 1 + most of Layer 2 + Layer 3's `__extends` undoing.
-- `@babel/*` — already a project dep, used for Cocos-specific ASTs.
-- `ts-morph` — Layer 6 TS emission (cleaner than Babel for TS decorators).
-- `prettier` — final formatting.
-- `humanify` (local mode) — Layer 7, optional, user installs separately. Documentation also explains the GitHub Copilot route via `copilot-api` as a user-borne risk option (see §6).
+我们依赖的外部工具（避免重复造轮子）：
+- `webcrack` — 驱动 Layer 1 + Layer 2 大部分 + Layer 3 的 `__extends` 还原。
+- `@babel/*` — 项目已有依赖，用于 Cocos 特定的 AST。
+- `ts-morph` — Layer 6 的 TS 输出（处理 TS 装饰器比 Babel 更干净）。
+- `prettier` — 最终格式化。
+- `humanify`（local 模式）— Layer 7，可选，用户单独安装。文档同时说明通过 `copilot-api` 走 GitHub Copilot 路径作为用户自担风险的选项（参见 §6）。
 
-### 2.2 Resource pipeline — Wave 0/1/2/3
+### 2.2 资源管线 — Wave 0/1/2/3
 
-Identified weaknesses, grouped by "is unblocked by previous wave":
+按"是否被前一波解锁"分组的已识别弱点：
 
 ```
 Wave 0 — corrective baseline (this round, slimmed from original plan)
@@ -83,13 +83,13 @@ Wave 3 — extended asset coverage
   R16. Binary settings deserialization
 ```
 
-Removed from plan (kicked to next 2.x round):
-- R2 settings.js eval safety (2.x exclusive code path).
-- R13 atlas timing (primarily a 2.x sprite-frame-before-atlas issue).
+从计划中移除（推到下一轮 2.x）：
+- R2 settings.js eval 安全（2.x 独占代码路径）。
+- R13 atlas 时序（主要是 2.x sprite-frame-before-atlas 问题）。
 
-### 2.3 PR sequence
+### 2.3 PR 顺序
 
-Stacked worktree topology (see §4):
+堆叠式 worktree 拓扑（参见 §4）：
 
 ```
 PR 1: Wave 0 (R1, R3, R4)                       ~400 LOC
@@ -101,11 +101,11 @@ PR 6: Wave 3 (R14–R16)                          ~600 LOC
 PR 7: skill methodology A–F (separate repo)     6 docs + SKILL.md refactor
 ```
 
-Merge order = list order. PR 3 starts after PR 2 because Layer 5's type inference reads scene/prefab JSON which depends on Wave 1 fixes.
+合并顺序 = 列表顺序。PR 3 在 PR 2 之后启动，因为 Layer 5 的类型推断需要读取 scene/prefab JSON，而后者依赖 Wave 1 的修复。
 
-## 3. Methodology Skill — A–F all in
+## 3. 方法论 Skill — A–F 全量
 
-`cocos-reverse-engineering-skill` companion plugin gains a 7-phase workflow (was 5):
+`cocos-reverse-engineering-skill` 配套插件获得 7 阶段工作流（原为 5 阶段）：
 
 ```
 Phase 0  legal-preflight      [F]   mandatory checklist before any bytes touched
@@ -120,22 +120,22 @@ Phase 8  analyze-recovered    [D]   how to read recovered code; SDK fingerprint 
         recovery-decisions    [C]   decision tree referenced from any failing phase
 ```
 
-Six new reference files under `references/`:
+`references/` 下六个新参考文件：
 
-| File | Topic |
+| 文件 | 主题 |
 |---|---|
-| `legal-preflight.md` | DMCA §1201(f), EU 2009/24 art.6, China copyright art.24(4) — quick checklist |
-| `triage.md` | Scope-driven invocation patterns |
-| `output-layers.md` | When to use raw chunks vs ESM vs TS project |
-| `quality-gates.md` | 5 gates: class-name coverage ≥ 80%, typed-field coverage ≥ 60%, UUID closure, tsc --noEmit, RECOVERY_REPORT cross-check |
-| `recovery-decisions.md` | Decision tree for partial / failing pipeline runs |
-| `analyzing-scripts.md` | Reading recovered TS, dependency graph, SDK fingerprint library (CN: 友盟 / 微信 / 字节 / 腾讯 / Bugly. International: AppLovin / Unity Ads / GameAnalytics / Firebase / IronSource) |
+| `legal-preflight.md` | DMCA §1201(f)、欧盟 2009/24 第 6 条、中国著作权法第 24 条第 4 项 — 快速核查清单 |
+| `triage.md` | 由范围驱动的调用模式 |
+| `output-layers.md` | 何时使用原始 chunk vs ESM vs TS 工程 |
+| `quality-gates.md` | 5 个质量门：类名覆盖率 ≥ 80%、类型化字段覆盖率 ≥ 60%、UUID 闭包、tsc --noEmit、RECOVERY_REPORT 交叉校验 |
+| `recovery-decisions.md` | 部分 / 失败管线运行的决策树 |
+| `analyzing-scripts.md` | 阅读恢复后的 TS、依赖图、SDK fingerprint 库（国内：友盟 / 微信 / 字节 / 腾讯 / Bugly。海外：AppLovin / Unity Ads / GameAnalytics / Firebase / IronSource） |
 
-`SKILL.md` gains a top-level "Reverse Engineering Principles" section codifying the methodology.
+`SKILL.md` 新增顶层 "Reverse Engineering Principles" 一节，将方法论编纂入文。
 
-## 4. Worktree & PR Workflow
+## 4. Worktree 与 PR 工作流
 
-Layout under `.worktrees/` (gitignored, project-local):
+`.worktrees/` 下的布局（已 gitignore，项目本地）：
 
 ```
 .worktrees/
@@ -147,23 +147,23 @@ Layout under `.worktrees/` (gitignored, project-local):
   pr6-wave3-extended-assets/   branched from main
 ```
 
-Skill repo (`/Users/lcf/code/cocos-reverse-engineering-skill/`) gets PR 7 in its own `.worktrees/pr7-skill-methodology-AF/`, started after PR 5 merges (so layered output is real).
+Skill 仓库（`/Users/lcf/code/cocos-reverse-engineering-skill/`）的 PR 7 在自有的 `.worktrees/pr7-skill-methodology-AF/` 中，于 PR 5 合并后启动（这样分层输出已经存在）。
 
-Per-PR Definition of Done:
-1. Design doc section flagged "implemented".
-2. ≥ 1 golden sample passes E2E (`npm run e2e -- <sample>`).
-3. All 5 quality gates either pass or have a "known regression" entry in baseline.
-4. CHANGELOG entry added.
-5. README sections updated where user-visible.
-6. 2.x golden samples (dabaoyiqie, cgxfd) regression-tested for "no degradation".
+每个 PR 的 Definition of Done：
+1. 设计文档对应章节标记为 "implemented"。
+2. ≥ 1 个 golden sample 通过 E2E（`npm run e2e -- <sample>`）。
+3. 所有 5 个质量门要么通过，要么在基线中有 "known regression" 条目。
+4. 添加 CHANGELOG 条目。
+5. 用户可见的部分，更新 README 章节。
+6. 2.x golden 样本（dabaoyiqie、cgxfd）回归测试 "无退化"。
 
-Remote layout (already configured):
-- `origin` → `clawnet-ai/cc-reverse` (clawnet fork, target for PRs)
-- `upstream` → `Crain99/cc-reverse` (original)
+远端布局（已配置）：
+- `origin` → `clawnet-ai/cc-reverse` (clawnet fork，PR 目标)
+- `upstream` → `Crain99/cc-reverse` (原仓库)
 
-## 5. Testing Strategy
+## 5. 测试策略
 
-Test pyramid:
+测试金字塔：
 
 ```
 E2E:           5 golden samples, baseline diffing
@@ -171,50 +171,50 @@ Integration:   per-module, ≥ 3 cases each
 Unit:          vitest, coverage on utility & boundary code
 ```
 
-Framework: `vitest`. Test root: `test/{unit,integration,e2e}`.
+框架：`vitest`。测试根目录：`test/{unit,integration,e2e}`。
 
-Golden samples (managed in external `~/code/cc-reverse-fixtures/`, not committed):
+Golden 样本（在外部 `~/code/cc-reverse-fixtures/` 管理，不入库）：
 
-| Sample | Engine | Source | Role |
+| 样本 | 引擎 | 来源 | 角色 |
 |---|---|---|---|
-| zqndtz | 3.x web-mobile, 4 bundles | `~/mini/zqndtz` | 3.x main golden |
-| 3x-vanilla | 3.x cocos example | self-built via cocos-cli | 3.x clean baseline |
-| 3x-jsc | 3.x native + XXTEA | self-built | encrypted scripts |
-| dabaoyiqie | 2.4.x bilibili | `~/mini/dabaoyiqie-reverse` | 2.x regression-only |
-| cgxfd | 2.4.x bilibili + subpkg | `~/mini/cgxfd-reverse` | 2.x regression-only |
+| zqndtz | 3.x web-mobile, 4 bundles | `~/mini/zqndtz` | 3.x 主 golden |
+| 3x-vanilla | 3.x cocos example | self-built via cocos-cli | 3.x 干净基线 |
+| 3x-jsc | 3.x native + XXTEA | self-built | 加密脚本 |
+| dabaoyiqie | 2.4.x bilibili | `~/mini/dabaoyiqie-reverse` | 2.x 仅回归 |
+| cgxfd | 2.4.x bilibili + subpkg | `~/mini/cgxfd-reverse` | 2.x 仅回归 |
 
-Quality gates (`cc-reverse validate <output-dir>`):
-1. Class-name coverage ≥ 80% (named classes / total classes)
-2. Typed-field coverage ≥ 60% (non-`any` fields / total fields)
-3. UUID closure: every `__uuid__` in scenes/prefabs resolves to a file in `import/`
-4. `tsc --noEmit` exit 0 against emitted Layer 6 project
-5. `RECOVERY_REPORT.md` asset count equals filesystem count
+质量门（`cc-reverse validate <output-dir>`）：
+1. 类名覆盖率 ≥ 80%（命名类 / 总类数）
+2. 类型化字段覆盖率 ≥ 60%（非 `any` 字段 / 总字段数）
+3. UUID 闭包：scenes/prefabs 中每个 `__uuid__` 都能在 `import/` 找到对应文件
+4. 对发出的 Layer 6 工程执行 `tsc --noEmit` 退出码 0
+5. `RECOVERY_REPORT.md` 中的资源数等于文件系统中的数量
 
-Each PR's CI runs all gates against all golden samples; baselines stored at `test/baselines/<sample>/manifest.json`. A failing gate must either be fixed or get an explicit baseline-update commit with a comment explaining why.
+每个 PR 的 CI 都对所有 golden 样本运行所有质量门；基线存放在 `test/baselines/<sample>/manifest.json`。失败的质量门要么修复，要么提交一次显式的 baseline-update commit 并附说明原因的注释。
 
-## 6. Decisions & Risks
+## 6. 决策与风险
 
-### Locked decisions
+### 已锁定决策
 
-- **Scope**: 3.x only this round; 2.x next round, reusing this round's infrastructure.
-- **External tools**: webcrack + ts-morph + prettier in deps. humanify NOT a hard dep — it's a user-installed CLI that PR 5 wraps with `cc-reverse humanify <dir>`.
-- **LLM provider for humanify**: support `local` (default, offline, downloadable model) and `openai` (configurable `OPENAI_BASE_URL`); document `copilot-api` as a user-borne risk option, never auto-installed.
-- **Worktree topology**: stacked PR 3-5; independent PR 1, 2, 6.
-- **SDK fingerprint library**: covers CN + international SDKs.
-- **Methodology scope**: full A–F.
-- **Script recovery layers**: 7 (was 6 — Layer 7 humanify added back after Copilot discussion).
+- **范围**：本轮仅 3.x；2.x 下一轮，复用本轮基础设施。
+- **外部工具**：webcrack + ts-morph + prettier 加入 deps。humanify 不是硬依赖 — 它是用户安装的 CLI，PR 5 用 `cc-reverse humanify <dir>` 包装。
+- **humanify 的 LLM provider**：支持 `local`（默认，离线，可下载模型）和 `openai`（可配置 `OPENAI_BASE_URL`）；将 `copilot-api` 文档化为用户自担风险的选项，绝不自动安装。
+- **Worktree 拓扑**：PR 3-5 堆叠；PR 1、2、6 独立。
+- **SDK fingerprint 库**：覆盖国内 + 海外 SDK。
+- **方法论范围**：完整 A–F。
+- **脚本恢复层数**：7（原为 6 — 在 Copilot 讨论后将 Layer 7 humanify 加回）。
 
-### Risks
+### 风险
 
-| Risk | Likelihood | Impact | Mitigation |
+| 风险 | 概率 | 影响 | 缓解 |
 |---|---|---|---|
-| webcrack misses Cocos-specific SystemJS shapes | medium | medium | PR 3 acceptance gate is "zqndtz pass"; fallback is hand-rolled Layer 1 |
-| CCON v2 notepack variants | medium | high | port `external/deserialize/notepack_decode.js` 1:1; integration test per branch |
-| Layer 5 type inference slow on large projects | low | medium | cache + incremental indexing; `--no-type-infer` escape hatch |
-| humanify local model download blocked | low | low | doc-only fallback (manual download path) |
-| Crain99/cc-reverse upstream drift | medium | low | per-PR `git fetch upstream main && rebase` discipline |
-| 2.x regression broken silently | medium | high | dabaoyiqie + cgxfd in CI as regression-only suite |
+| webcrack 漏掉 Cocos 特有的 SystemJS 形状 | 中 | 中 | PR 3 验收门是 "zqndtz 通过"；fallback 是手写的 Layer 1 |
+| CCON v2 notepack 变种 | 中 | 高 | 1:1 移植 `external/deserialize/notepack_decode.js`；按分支做集成测试 |
+| Layer 5 类型推断在大型项目上慢 | 低 | 中 | 缓存 + 增量索引；提供 `--no-type-infer` 逃生口 |
+| humanify 本地模型下载被阻断 | 低 | 低 | 仅文档 fallback（手动下载路径） |
+| Crain99/cc-reverse 上游漂移 | 中 | 低 | 每 PR 执行 `git fetch upstream main && rebase` 纪律 |
+| 2.x 静默回归 | 中 | 高 | dabaoyiqie + cgxfd 在 CI 中作为仅回归套件 |
 
-## 7. Acceptance for "round complete"
+## 7. "本轮完成" 验收
 
-All 7 PRs merged. All 3 3.x golden samples pass all 5 quality gates. 2.x regression suite shows no degradation. CHANGELOG covers each PR. README + skill SKILL.md describe the new pipeline.
+全部 7 个 PR 合并。所有 3 个 3.x golden 样本通过全部 5 个质量门。2.x 回归套件无退化。CHANGELOG 覆盖每个 PR。README + skill SKILL.md 描述新管线。

@@ -1,56 +1,56 @@
-# PR 5 — Wave 2 (R9–R12) + Layer 7 humanify + carry-over fixes
+# PR 5 — Wave 2(R9–R12)+ Layer 7 humanify + 遗留修复
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Bring 3.x output up to "honest project metadata" (dynamic `project.json` from source `settings.json`, smarter class→dir mapping, fuller `.meta` files, drop hardcoded type table for 3.x); add opt-in Layer 7 humanify wrapper (`cc-reverse humanify <dir>`); pay back carry-over test/UX gaps from PR 3/4 reviews.
+**目标：** 把 3.x 的输出提升到"诚实的工程元数据"水准(从源 `settings.json` 动态生成 `project.json`、更智能的 class→dir 映射、更完整的 `.meta` 文件、3.x 弃用硬编码类型表);新增可选的 Layer 7 humanify 包装(`cc-reverse humanify <dir>`);偿还 PR 3/4 评审中遗留的测试/UX 缺口。
 
-**Architecture:** All Wave 2 changes live in `src/core/cocos3x/projectScaffold.js` + `engine3x.js`. New `src/core/cocos3x/scriptRecovery/humanify.js` (Layer 7, opt-in, shells out to `humanify` CLI when available, no hard dep). Carry-over fixes are surgical edits to existing files. 2.x code path is untouched.
+**架构:** 所有 Wave 2 改动落在 `src/core/cocos3x/projectScaffold.js` + `engine3x.js`。新增 `src/core/cocos3x/scriptRecovery/humanify.js`(Layer 7,可选,在 `humanify` CLI 可用时 shell out,不作为硬依赖)。遗留修复是对现有文件的小手术。2.x 代码路径完全不动。
 
-**Tech Stack:** Node ESM; existing babel/ts-morph/prettier; `child_process.spawn` for humanify; vitest.
+**技术栈:** Node ESM;现有的 babel/ts-morph/prettier;`child_process.spawn` 用于 humanify;vitest。
 
 ---
 
-## Carry-over fixes (from PR 3/4 reviews)
+## 遗留修复(来自 PR 3/4 评审)
 
-| Source | Item | Where |
+| 来源 | 项目 | 落位 |
 |---|---|---|
-| PR 4 Task 2 review | typeInferer branch tests: `__uuid__` miss → `any`, `__id__` OOB, inline `__type__: cc.X`, null/undefined, multi-module uuidMap aggregation | Task 6 |
-| PR 4 Task 3 review | tsProject gate discards count + tsconfig info | Task 5 |
-| PR 4 Task 5 review | recoveryIndex gate failure detail truncates to first missing entry | Task 5 |
-| PR 4 Task 1 review | ccclassNamer: no test for class self-reference rename, bare `_RF.push`, `@ccclass` no-arg | Task 6 |
+| PR 4 Task 2 评审 | typeInferer 分支测试:`__uuid__` 未命中 → `any`、`__id__` 越界、内联 `__type__: cc.X`、null/undefined、多模块 uuidMap 聚合 | Task 6 |
+| PR 4 Task 3 评审 | tsProject gate 丢弃了 count 与 tsconfig 信息 | Task 5 |
+| PR 4 Task 5 评审 | recoveryIndex gate 失败信息只截到第一个 missing | Task 5 |
+| PR 4 Task 1 评审 | ccclassNamer:缺少类自引用改名、裸 `_RF.push`、`@ccclass` 无参 测试 | Task 6 |
 
 ---
 
-## State before PR 5
+## PR 5 之前的状态
 
-- Branch: `feature/pr5-wave2-and-humanify` from main `9c88745`
-- Tests baseline: **80 passing** (21 files)
-- 3.x `project.json`: hardcoded `name: 'recovered-cocos3-project'`, `version: '3.0.0'`
-- 3.x assets get `.meta` only for scripts; other assets land bare
-- 3.x asset placement: `CLASS_DIR` map gives subdir, but path retains source's full `config.paths[uuid].path` — sometimes mismatched
-- No humanify wrapper
+- 分支:`feature/pr5-wave2-and-humanify`,基于 main `9c88745`
+- 测试基线:**80 通过**(21 个文件)
+- 3.x `project.json`:硬编码 `name: 'recovered-cocos3-project'`,`version: '3.0.0'`
+- 3.x 资源仅脚本得到 `.meta`;其他资源裸落地
+- 3.x 资源放置:`CLASS_DIR` 给出子目录,但路径仍保留源 `config.paths[uuid].path` 全量 — 时有错位
+- 没有 humanify 包装
 
-## Test progression
+## 测试演进
 
 `80 → 82 (T0) → 86 (T1 R9) → 89 (T2 R10) → 92 (T3 R11+R12) → 96 (T4 humanify) → 100 (T5 gate fixes) → 105 (T6 carry-over tests)`
 
-Final target: **105 passing**.
+最终目标:**105 通过**。
 
 ---
 
-## Task 0: Plan + baseline guard
+## Task 0:计划 + 基线护栏
 
-**Files:**
-- This plan file (committed already by user once execution starts).
+**文件：**
+- 本计划文件(执行开始时由用户已 commit)。
 
-**Step 1: Verify baseline**
+**Step 1:校验基线**
 
-Run: `npm test`
-Expected: 80 passing, 21 files.
+运行:`npm test`
+预期:80 通过,21 个文件。
 
-**Step 2: Add an integration safety net for Wave 2**
+**Step 2:为 Wave 2 加一张集成保护网**
 
-Create: `test/integration/wave2.placeholder.test.js`
+创建:`test/integration/wave2.placeholder.test.js`
 
 ```javascript
 import { describe, it, expect } from 'vitest';
@@ -79,12 +79,12 @@ describe('Wave 2 placeholders', () => {
 });
 ```
 
-**Step 3: Run tests**
+**Step 3:跑测试**
 
-Run: `npm test`
-Expected: 82 passing.
+运行:`npm test`
+预期:82 通过。
 
-**Step 4: Commit**
+**Step 4:提交**
 
 ```bash
 git add docs/plans/2026-05-12-pr5-wave2-and-humanify.md test/integration/wave2.placeholder.test.js
@@ -93,18 +93,18 @@ git commit -m "docs+test: PR5 plan + Wave 2 placeholder smoke test"
 
 ---
 
-## Task 1: R9 — Dynamic 3.x project.json from settings
+## Task 1:R9 — 由 settings 动态生成 3.x project.json
 
-**Goal:** 3.x output's `project.json`, `package.json`, and `settings/project.json` reflect the source build (engine version, project name, design resolution, launch scene) instead of hardcoded constants.
+**目标:** 3.x 输出的 `project.json`、`package.json`、`settings/project.json` 反映源构建(引擎版本、工程名、设计分辨率、启动场景),不再是硬编码常量。
 
-**Files:**
-- Modify: `src/core/cocos3x/projectScaffold.js` — add `writeCocos3xProject(outputPath, opts)` next to existing 2.x writer
-- Modify: `src/core/cocos3x/engine3x.js` — replace inline `writeProjectDescriptor` body with call to `writeCocos3xProject`, threading `settings` from `detectProjectFlavor`
-- Test: `test/unit/projectScaffold3x.test.js` (new, 4 tests)
+**文件：**
+- 修改:`src/core/cocos3x/projectScaffold.js` — 在现有 2.x writer 旁新增 `writeCocos3xProject(outputPath, opts)`
+- 修改:`src/core/cocos3x/engine3x.js` — 把内联的 `writeProjectDescriptor` 体替换为对 `writeCocos3xProject` 的调用,并把 `detectProjectFlavor` 拿到的 `settings` 串进去
+- 测试:`test/unit/projectScaffold3x.test.js`(新增,4 个测试)
 
-**Step 1: Write failing tests**
+**Step 1:写失败测试**
 
-Create `test/unit/projectScaffold3x.test.js`:
+创建 `test/unit/projectScaffold3x.test.js`:
 
 ```javascript
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -157,12 +157,12 @@ describe('writeCocos3xProject', () => {
 });
 ```
 
-Run: `npm test test/unit/projectScaffold3x.test.js`
-Expected: FAIL — `writeCocos3xProject is not a function`.
+运行:`npm test test/unit/projectScaffold3x.test.js`
+预期:FAIL — `writeCocos3xProject is not a function`。
 
-**Step 2: Implement `writeCocos3xProject`**
+**Step 2:实现 `writeCocos3xProject`**
 
-Append to `src/core/cocos3x/projectScaffold.js` (before `module.exports`):
+追加到 `src/core/cocos3x/projectScaffold.js`(在 `module.exports` 之前):
 
 ```javascript
 /**
@@ -237,16 +237,16 @@ function pickCocosVersion(settings) {
 }
 ```
 
-Update the exports line:
+更新 exports:
 ```javascript
 module.exports = { writeCocos2xProject, writeCocos3xProject };
 ```
 
-**Step 3: Wire engine3x to use it**
+**Step 3:在 engine3x 中接线**
 
-In `src/core/cocos3x/engine3x.js`:
+在 `src/core/cocos3x/engine3x.js`:
 
-Replace the `writeProjectDescriptor` definition with:
+把 `writeProjectDescriptor` 定义替换为:
 ```javascript
 const { writeCocos2xProject, writeCocos3xProject } = require('./projectScaffold');
 
@@ -258,14 +258,14 @@ async function writeProjectDescriptor(outputPath, settings, sourceProjectName) {
 }
 ```
 
-Find the call site of `writeProjectDescriptor(outputPath)` — pass through the `settings` object captured in `detectProjectFlavor` and (if available) a derived project name (e.g., basename of sourcePath). Trace: it's called near the end of `reverseProject3x`. Capture both args from the surrounding scope.
+找到 `writeProjectDescriptor(outputPath)` 的调用点 — 把在 `detectProjectFlavor` 中拿到的 `settings` 对象以及(若有)派生的工程名(例如 sourcePath 的 basename)透传过去。追踪:它在 `reverseProject3x` 的尾部被调用。从外层作用域取这两个参数。
 
-**Step 4: Run tests**
+**Step 4:跑测试**
 
-Run: `npm test`
-Expected: 86 passing.
+运行:`npm test`
+预期:86 通过。
 
-**Step 5: Commit**
+**Step 5:提交**
 
 ```bash
 git add -u src/core/cocos3x/projectScaffold.js src/core/cocos3x/engine3x.js
@@ -275,17 +275,17 @@ git commit -m "feat(3x): R9 dynamic project.json from source settings.json"
 
 ---
 
-## Task 2: R10 — Use SharedClasses dynamic type table for 3.x
+## Task 2:R10 — 3.x 使用 SharedClasses 动态类型表
 
-**Goal:** Stop loading `src/core/typeDefinitions.js` (which is the 2.x hardcoded table) when rehydrating 3.x assets; rely entirely on each document's own `sharedClasses` (already wired in `rehydrate.js`). Confirm + add a test pinning the behavior so future regressions are caught.
+**目标:** 在 rehydrate 3.x 资源时不再加载 `src/core/typeDefinitions.js`(那是 2.x 的硬编码表);完全依赖每份文档自带的 `sharedClasses`(`rehydrate.js` 已经接通)。确认现状 + 加一个测试钉死行为,以便后续有回归立即被捕获。
 
-**Files:**
-- Audit: `src/core/cocos3x/rehydrate.js` and `src/core/cocos3x/engine3x.js` for any import of `../typeDefinitions`. There should be none — but verify and document with an integration test.
-- Test: `test/unit/cocos3x.no-static-types.test.js` (new, 3 tests)
+**文件：**
+- 审计:`src/core/cocos3x/rehydrate.js` 与 `src/core/cocos3x/engine3x.js` 是否有 `../typeDefinitions` 的 import。理论上没有 — 但要校验并以集成测试作记录。
+- 测试:`test/unit/cocos3x.no-static-types.test.js`(新增,3 个测试)
 
-**Step 1: Write tests asserting the boundary**
+**Step 1:写测试断言边界**
 
-Create `test/unit/cocos3x.no-static-types.test.js`:
+创建 `test/unit/cocos3x.no-static-types.test.js`:
 
 ```javascript
 import { describe, it, expect } from 'vitest';
@@ -329,12 +329,12 @@ describe('3.x must not depend on 2.x typeDefinitions', () => {
 });
 ```
 
-Run: `npm test test/unit/cocos3x.no-static-types.test.js`
-Expected: PASS already (current code has no offending imports). If FAIL, fix the offender by removing the import.
+运行:`npm test test/unit/cocos3x.no-static-types.test.js`
+预期:已经 PASS(当前代码无违规 import)。如果 FAIL,通过移除 import 修复违规者。
 
-**Step 2: Add a doc comment in rehydrate.js**
+**Step 2:在 rehydrate.js 顶部加文档注释**
 
-Edit the top doc-comment in `src/core/cocos3x/rehydrate.js` to explicitly call out:
+在 `src/core/cocos3x/rehydrate.js` 顶部 doc-comment 中显式声明:
 
 ```
 * NOTE: 3.x rehydration is fully driven by each document's own
@@ -343,12 +343,12 @@ Edit the top doc-comment in `src/core/cocos3x/rehydrate.js` to explicitly call o
 * for the regression guard.
 ```
 
-**Step 3: Run tests**
+**Step 3:跑测试**
 
-Run: `npm test`
-Expected: 89 passing.
+运行:`npm test`
+预期:89 通过。
 
-**Step 4: Commit**
+**Step 4:提交**
 
 ```bash
 git add -u src/core/cocos3x/rehydrate.js
@@ -358,20 +358,20 @@ git commit -m "test(3x): R10 pin 'no static typeDefinitions' boundary"
 
 ---
 
-## Task 3: R11 + R12 — Smarter class→dir mapping + complete .meta files
+## Task 3:R11 + R12 — 更智能的 class→dir 映射 + 完整 .meta 文件
 
-**Goal (R11):** When the source project's `config.paths[uuid].path` is empty/missing or collides, derive a sensible output path from the asset's recovered class via `CLASS_DIR` + extension; preserve original path when present.
+**目标(R11):** 当源工程 `config.paths[uuid].path` 缺失/为空或冲突时,通过 `CLASS_DIR` + 扩展名,从该资源的恢复后类派生出合理的输出路径;路径存在时予以保留。
 
-**Goal (R12):** Emit a richer `.meta` for non-script assets (currently only scripts get one). Use class-aware shape: `{ ver, importer, uuid, files, subMetas }` keyed off the asset class.
+**目标(R12):** 为非脚本资源也输出更丰富的 `.meta`(目前只有脚本会得到)。按资源类采用 class-aware 形态:`{ ver, importer, uuid, files, subMetas }`。
 
-**Files:**
-- Modify: `src/core/cocos3x/engine3x.js` — extract a `resolveOutputPath(uuid, cfg, klass)` helper; widen the `.meta` emitter to cover non-script assets
-- Test: `test/unit/cocos3x.outputPath.test.js` (new, 2 tests)
-- Test: `test/integration/cocos3x.metaFiles.test.js` (new, 1 test)
+**文件：**
+- 修改:`src/core/cocos3x/engine3x.js` — 抽出 `resolveOutputPath(uuid, cfg, klass)` 辅助;扩宽 `.meta` emitter 覆盖非脚本资源
+- 测试:`test/unit/cocos3x.outputPath.test.js`(新增,2 个测试)
+- 测试:`test/integration/cocos3x.metaFiles.test.js`(新增,1 个测试)
 
-**Step 1: Write failing tests**
+**Step 1:写失败测试**
 
-Create `test/unit/cocos3x.outputPath.test.js`:
+创建 `test/unit/cocos3x.outputPath.test.js`:
 
 ```javascript
 import { describe, it, expect } from 'vitest';
@@ -391,7 +391,7 @@ describe('resolveOutputPath', () => {
 });
 ```
 
-Create `test/integration/cocos3x.metaFiles.test.js`:
+创建 `test/integration/cocos3x.metaFiles.test.js`:
 
 ```javascript
 import { describe, it, expect } from 'vitest';
@@ -417,12 +417,12 @@ describe('writeAssetMeta', () => {
 });
 ```
 
-Run: `npm test test/unit/cocos3x.outputPath.test.js test/integration/cocos3x.metaFiles.test.js`
-Expected: FAIL — neither helper exported.
+运行:`npm test test/unit/cocos3x.outputPath.test.js test/integration/cocos3x.metaFiles.test.js`
+预期:FAIL — 两个 helper 都未导出。
 
-**Step 2: Implement helpers in engine3x.js**
+**Step 2:在 engine3x.js 中实现 helper**
 
-Add (export both at the bottom of the file's `module.exports`):
+加入(并在文件 `module.exports` 末尾两者都导出):
 
 ```javascript
 const KLASS_TO_IMPORTER = {
@@ -471,20 +471,20 @@ module.exports = {
 };
 ```
 
-(Also ensure `KLASS_TO_IMPORTER` and `CLASS_DIR` are visible to the helper.)
+(同时确保 `KLASS_TO_IMPORTER` 与 `CLASS_DIR` 对该 helper 可见。)
 
-**Step 3: Use the helpers in the asset-write loop**
+**Step 3:在资源写循环中使用这两个 helper**
 
-Find the existing inner loop that copies asset documents (the place that today computes the output filename via `config.paths[uuid].path`). Replace the inline path computation with `resolveOutputPath(uuid, cfg, klass, ext)`. After successfully writing the asset, call `await writeAssetMeta(outBase + ext, { uuid, klass })` if `klass` is in `KLASS_TO_IMPORTER` and a `.meta` file isn't already there.
+找到现有的、复制资源文档的内层循环(目前通过 `config.paths[uuid].path` 计算输出文件名的位置)。把内联路径计算替换为 `resolveOutputPath(uuid, cfg, klass, ext)`。资源写成功后,如果 `klass` 在 `KLASS_TO_IMPORTER` 中且该路径还没有 `.meta`,则调用 `await writeAssetMeta(outBase + ext, { uuid, klass })`。
 
-Keep the existing script `.meta` emitter intact.
+保留现有的脚本 `.meta` emitter。
 
-**Step 4: Run tests**
+**Step 4:跑测试**
 
-Run: `npm test`
-Expected: 92 passing.
+运行:`npm test`
+预期:92 通过。
 
-**Step 5: Commit**
+**Step 5:提交**
 
 ```bash
 git add -u src/core/cocos3x/engine3x.js
@@ -494,18 +494,18 @@ git commit -m "feat(3x): R11 path resolver + R12 richer asset .meta files"
 
 ---
 
-## Task 4: Layer 7 humanify wrapper
+## Task 4:Layer 7 humanify 包装
 
-**Goal:** Provide an opt-in `cc-reverse humanify <dir>` command that calls the user-installed `humanify` CLI on the recovered TS project. No hard dep. Two providers: `local` (default) and `openai` (configurable via `OPENAI_BASE_URL` and `OPENAI_API_KEY`). Detect missing CLI and exit 1 with install instructions; do NOT auto-install.
+**目标:** 提供可选的 `cc-reverse humanify <dir>` 命令,在已恢复的 TS 工程上调用用户已安装的 `humanify` CLI。无硬依赖。两种 provider:`local`(默认)与 `openai`(可经 `OPENAI_BASE_URL` 与 `OPENAI_API_KEY` 配置)。检测到缺少 CLI 时退出码 1 并附安装说明;**不**自动安装。
 
-**Files:**
-- Create: `src/core/cocos3x/scriptRecovery/humanify.js`
-- Modify: `src/index.js` — register subcommand
-- Test: `test/unit/scriptRecovery.humanify.test.js` (new, 4 tests)
+**文件：**
+- 创建:`src/core/cocos3x/scriptRecovery/humanify.js`
+- 修改:`src/index.js` — 注册子命令
+- 测试:`test/unit/scriptRecovery.humanify.test.js`(新增,4 个测试)
 
-**Step 1: Write failing tests**
+**Step 1:写失败测试**
 
-Create `test/unit/scriptRecovery.humanify.test.js`:
+创建 `test/unit/scriptRecovery.humanify.test.js`:
 
 ```javascript
 import { describe, it, expect, vi } from 'vitest';
@@ -542,10 +542,10 @@ describe('humanify wrapper', () => {
 });
 ```
 
-Run: `npm test test/unit/scriptRecovery.humanify.test.js`
-Expected: FAIL — module not found.
+运行:`npm test test/unit/scriptRecovery.humanify.test.js`
+预期:FAIL — 模块不存在。
 
-**Step 2: Implement `humanify.js`**
+**Step 2:实现 `humanify.js`**
 
 ```javascript
 /*
@@ -614,9 +614,9 @@ async function runHumanify(outDir, opts = {}) {
 module.exports = { runHumanify, buildHumanifyArgs };
 ```
 
-**Step 3: Wire CLI subcommand in `src/index.js`**
+**Step 3:在 `src/index.js` 接 CLI 子命令**
 
-Add (alongside existing commander commands):
+加入(与现有 commander 命令并列):
 
 ```javascript
 program
@@ -642,12 +642,12 @@ program
   });
 ```
 
-**Step 4: Run tests**
+**Step 4:跑测试**
 
-Run: `npm test`
-Expected: 96 passing.
+运行:`npm test`
+预期:96 通过。
 
-**Step 5: Commit**
+**Step 5:提交**
 
 ```bash
 git add src/core/cocos3x/scriptRecovery/humanify.js test/unit/scriptRecovery.humanify.test.js
@@ -657,35 +657,35 @@ git commit -m "feat(3x scripts): Layer 7 humanify wrapper (opt-in CLI subcommand
 
 ---
 
-## Task 5: Carry-over gate fixes (PR 4 review)
+## Task 5:遗留 gate 修复(PR 4 评审)
 
-**Goal:** Fix the two gate UX gaps caught in PR 4 reviews.
+**目标:** 修复 PR 4 评审中暴露的两个 gate UX 缺陷。
 
-- `tsProject` gate: surface tsconfig presence + count in `detail`.
-- `recoveryIndex` gate: list ALL missing entries (cap at 10 to keep output sane), not just the first.
+- `tsProject` gate:把 tsconfig 是否存在 + 文件数暴露在 `detail` 中。
+- `recoveryIndex` gate:列出*所有*缺失项(上限 10,以免输出过长),不再只列第一项。
 
-**Files:**
-- Modify: `src/validate/gates/tsProject.js`
-- Modify: `src/validate/gates/recoveryIndex.js`
-- Modify: `test/unit/validate.gates.test.js` (add 2 tightened tests; bring file +2)
+**文件：**
+- 修改:`src/validate/gates/tsProject.js`
+- 修改:`src/validate/gates/recoveryIndex.js`
+- 修改:`test/unit/validate.gates.test.js`(加 2 个更紧的测试;文件 +2)
 
-**Step 1: tsProject — keep the data**
+**Step 1:tsProject — 保住数据**
 
-Edit `src/validate/gates/tsProject.js`:
+编辑 `src/validate/gates/tsProject.js`:
 
-Replace the `void tsFiles; void hasTsconfig;` lines with:
+把 `void tsFiles; void hasTsconfig;` 行替换为:
 
 ```javascript
 return { ok: true, detail: `${tsFiles} .ts file(s); tsconfig.json ${hasTsconfig ? 'present' : 'absent'}` };
 ```
 
-Check what `runGates` does with `{ ok, detail }` return — sibling gates (e.g., `cconV2`, `layeredScripts`) may return shape variants. Match whatever convention currently surfaces `detail` in `passed`/`failed`. If gates return plain `true`/`string`, instead change tsProject to return the descriptive string only on failure (keep `true` on pass) AND update via `console.log` from the gate itself OR upgrade `runGates` once, so `passed` entries can carry detail. Pick the **lowest-impact** option: if `runGates` already supports object returns (`{name, detail}`), use that; otherwise, just return `true` and accept that tsProject stays informational-only. Document the choice in the test.
+检查 `runGates` 对 `{ ok, detail }` 返回值的处理 — 同级 gate(如 `cconV2`、`layeredScripts`)可能用了不同 shape。匹配现有把 `detail` 投射到 `passed`/`failed` 的约定。如果 gate 现在返回的是裸 `true`/字符串,要么改成只在失败时返回描述字符串(成功保持 `true`),要么一次性升级 `runGates`,使 `passed` 条目能携带 detail。选**改动最小**的方案:若 `runGates` 已支持对象返回 (`{name, detail}`) 就用之;否则就返回 `true`,接受 tsProject 仍仅作信息性。在测试里把这一选择记下。
 
-**Step 2: recoveryIndex — list all missing**
+**Step 2:recoveryIndex — 列出全部 missing**
 
-Edit `src/validate/gates/recoveryIndex.js`:
+编辑 `src/validate/gates/recoveryIndex.js`:
 
-Replace the failure message with:
+把失败信息替换为:
 
 ```javascript
 const list = missing.slice(0, 10).join(', ');
@@ -693,9 +693,9 @@ const more = missing.length > 10 ? ` (+${missing.length - 10} more)` : '';
 return `${missing.length} missing entries: ${list}${more}`;
 ```
 
-**Step 3: Tighten tests**
+**Step 3:加紧测试**
 
-In `test/unit/validate.gates.test.js`, append:
+在 `test/unit/validate.gates.test.js` 末尾追加:
 
 ```javascript
 it('recoveryIndex failure detail enumerates missing entries', async () => {
@@ -735,16 +735,16 @@ it('tsProject pass surfaces file count + tsconfig presence', async () => {
 });
 ```
 
-(Add the necessary imports/helpers at the top of the file if not already present.)
+(必要的 imports/helpers 若未引入,在文件顶部加上。)
 
-If runGates does NOT today thread `detail` through, also patch `src/validate/index.js` (`runGates`) so a gate returning `{ ok, detail }` populates `passed.push({name, detail})` and a string-return failure populates `failed.push({name, detail: <string>})`. Keep backward compat with bare-`true` returns.
+如果 runGates 当前没有把 `detail` 串出去,也要 patch `src/validate/index.js`(`runGates`),让返回 `{ ok, detail }` 的 gate 把 `passed.push({name, detail})` 写入,字符串失败返回写入 `failed.push({name, detail: <string>})`。保持对裸 `true` 返回的向后兼容。
 
-**Step 4: Run tests**
+**Step 4:跑测试**
 
-Run: `npm test`
-Expected: 100 passing.
+运行:`npm test`
+预期:100 通过。
 
-**Step 5: Commit**
+**Step 5:提交**
 
 ```bash
 git add -u src/validate/gates/tsProject.js src/validate/gates/recoveryIndex.js src/validate/index.js test/unit/validate.gates.test.js
@@ -753,17 +753,17 @@ git commit -m "fix(validate): surface tsProject detail; enumerate recoveryIndex 
 
 ---
 
-## Task 6: Carry-over Layer 4/5 test gaps (PR 4 reviews)
+## Task 6:遗留 Layer 4/5 测试缺口(PR 4 评审)
 
-**Goal:** Add the missing branch tests reviewers flagged. No production code changes — only tests. If a test exposes a real bug, fix it in the same commit.
+**目标:** 补齐评审标记的缺失分支测试。无生产代码改动 — 仅测试。如有测试暴露真实 bug,在同一 commit 里修。
 
-**Files:**
-- Modify: `test/unit/scriptRecovery.ccclassNamer.test.js` (add 2 tests)
-- Modify: `test/unit/scriptRecovery.typeInferer.test.js` (add 3 tests)
+**文件：**
+- 修改:`test/unit/scriptRecovery.ccclassNamer.test.js`(加 2 个测试)
+- 修改:`test/unit/scriptRecovery.typeInferer.test.js`(加 3 个测试)
 
-**Step 1: ccclassNamer — class self-reference rename + bare _RF.push**
+**Step 1:ccclassNamer — 类自引用改名 + 裸 _RF.push**
 
-Append:
+追加:
 
 ```javascript
 it('renames references to the class, not just the declaration', async () => {
@@ -809,9 +809,9 @@ it('handles bare _RF.push (no cclegacy prefix)', async () => {
 });
 ```
 
-**Step 2: typeInferer — branch coverage**
+**Step 2:typeInferer — 分支覆盖**
 
-Append to `test/unit/scriptRecovery.typeInferer.test.js`:
+追加到 `test/unit/scriptRecovery.typeInferer.test.js`:
 
 ```javascript
 it('__uuid__ miss → any (documented MVP fallback, NOT plan default of string)', async () => {
@@ -837,14 +837,14 @@ it('aggregates uuidMap across modules for cross-module __uuid__ lookup', async (
 });
 ```
 
-If any of these reveal a bug (e.g., `inferType` not exported, or aggregation actually broken), fix in the same commit and explain in the message.
+如这些测试暴露任何 bug(例如 `inferType` 未导出,或聚合实际有问题),在同一 commit 中修复并在提交信息说明。
 
-**Step 3: Run tests**
+**Step 3:跑测试**
 
-Run: `npm test`
-Expected: 105 passing.
+运行:`npm test`
+预期:105 通过。
 
-**Step 4: Commit**
+**Step 4:提交**
 
 ```bash
 git add -u test/unit/scriptRecovery.ccclassNamer.test.js test/unit/scriptRecovery.typeInferer.test.js
@@ -853,30 +853,30 @@ git commit -m "test(3x scripts): close PR4 review coverage gaps (Layer 4 refs, L
 
 ---
 
-## Task 7: CHANGELOG + README + push + PR
+## Task 7:CHANGELOG + README + push + PR
 
-**Step 1: CHANGELOG**
+**Step 1:CHANGELOG**
 
-Add an Unreleased entry summarizing:
+新增 Unreleased 条目,概述:
 
-- R9 — `project.json` / `package.json` / `settings/project.json` now derived from source `src/settings.json` (engine version, project name, design resolution, launch scene).
-- R10 — explicit boundary: 3.x rehydration uses each document's `sharedClasses`; the 2.x `typeDefinitions` table is no longer in the 3.x dep graph (regression-pinned by test).
-- R11 — `resolveOutputPath` falls back to `<classDir>/<uuid>` when source path missing.
-- R12 — non-script assets get `.meta` files (importer keyed by class).
-- Layer 7 — opt-in `cc-reverse humanify <outDir>` CLI (no hard dep on humanify CLI; supports local + openai providers; copilot-api documented as user-borne risk only).
-- Carry-over fixes — gate detail strings; ccclassNamer + typeInferer test gaps closed.
-- 105 tests passing.
+- R9 — `project.json` / `package.json` / `settings/project.json` 现在派生自源 `src/settings.json`(引擎版本、工程名、设计分辨率、启动场景)。
+- R10 — 显式边界:3.x rehydration 使用每份文档的 `sharedClasses`;2.x `typeDefinitions` 表已不在 3.x 依赖图中(由测试钉死)。
+- R11 — 源 path 缺失时 `resolveOutputPath` 回退到 `<classDir>/<uuid>`。
+- R12 — 非脚本资源也得到 `.meta`(importer 按类映射)。
+- Layer 7 — 可选的 `cc-reverse humanify <outDir>` CLI(对 humanify CLI 无硬依赖;支持 local + openai provider;copilot-api 仅作为用户自担风险记入文档)。
+- 遗留修复 — gate detail 字符串;ccclassNamer + typeInferer 测试缺口已补。
+- 105 个测试通过。
 
-**Step 2: README**
+**Step 2:README**
 
-Add a `### Layer 7 — humanify (opt-in)` subsection under the script-recovery docs:
+在脚本恢复文档下新增 `### Layer 7 — humanify (opt-in)` 子节:
 
-- How to install (`npm i -g humanify`).
-- Two supported providers (local default; openai with `OPENAI_BASE_URL` / `OPENAI_API_KEY`).
-- Output: `<outDir>/humanified/`.
-- Note that copilot-api is a documented user-borne risk path and is NOT wired by this tool.
+- 安装方法 (`npm i -g humanify`)。
+- 两种支持的 provider(local 默认;openai 通过 `OPENAI_BASE_URL` / `OPENAI_API_KEY`)。
+- 输出:`<outDir>/humanified/`。
+- 备注:copilot-api 是文档化的用户自担风险路径,本工具**不**接通它。
 
-**Step 3: Final test + push**
+**Step 3:终测 + push**
 
 ```bash
 npm test  # expect 105
@@ -885,7 +885,7 @@ git commit -m "docs: changelog + readme for PR 5 (Wave 2 + humanify)"
 git push origin feature/pr5-wave2-and-humanify
 ```
 
-**Step 4: Create PR**
+**Step 4:创建 PR**
 
 ```bash
 gh pr create --base main --head feature/pr5-wave2-and-humanify \
@@ -926,13 +926,13 @@ EOF
 )"
 ```
 
-Report PR URL.
+报告 PR URL。
 
 ---
 
 ## Definition of Done
 
-1. All 105 tests pass.
-2. CHANGELOG + README updated.
-3. PR opened on `clawnet-ai/cc-reverse` against `main`.
-4. No 2.x regression (engine2x untouched; 2.x golden samples not in CI here, but plan asserts no edits to `src/core/cocos2x/**`).
+1. 所有 105 个测试通过。
+2. CHANGELOG + README 已更新。
+3. PR 已在 `clawnet-ai/cc-reverse` 上对 `main` 提交。
+4. 无 2.x 退化(engine2x 未触;2.x golden 样本不在此处的 CI 中,但本计划承诺不动 `src/core/cocos2x/**`)。
