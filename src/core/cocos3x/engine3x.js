@@ -106,6 +106,9 @@ const KLASS_TO_IMPORTER = {
   'cc.Mesh': 'gltf-mesh',
   'cc.SkeletalAnimationClip': 'skeletal-animation-clip',
   'cc.BufferAsset': 'buffer',
+  'sp.SkeletonData': 'spine',
+  'dragonBones.DragonBonesAsset': 'dragonbones',
+  'dragonBones.DragonBonesAtlasAsset': 'dragonbones-atlas',
 };
 
 /**
@@ -129,8 +132,10 @@ function resolveOutputPath(uuid, cfg, klass, ext = '') {
  * R12 — Write an editor-style asset .meta next to the recovered file.
  */
 async function writeAssetMeta(filePath, opts) {
-  const { uuid, klass } = opts;
+  const { uuid, klass, extras } = opts;
   const importer = KLASS_TO_IMPORTER[klass] || 'unknown';
+  const userData = { recoveredBy: 'cc-reverse' };
+  if (extras && typeof extras === 'object') Object.assign(userData, extras);
   const meta = {
     ver: '1.0.0',
     importer,
@@ -138,7 +143,7 @@ async function writeAssetMeta(filePath, opts) {
     uuid,
     files: [path.extname(filePath)],
     subMetas: {},
-    userData: { recoveredBy: 'cc-reverse' },
+    userData,
   };
   await writeFile(filePath + '.meta', JSON.stringify(meta, null, 2));
 }
@@ -646,8 +651,18 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
   if ((importRecovered || nativeRecovered) && KLASS_TO_IMPORTER[className]) {
     const primaryExt = isPureNativeClass(className) ? '' : inferImportExt(className);
     const primaryFile = outBase + primaryExt;
+    let extras;
+    if (className === 'sp.SkeletonData' && importRecovered) {
+      try {
+        const doc = JSON.parse(await fsp.readFile(outBase + importExt, 'utf-8'));
+        const textures = Array.isArray(doc.textures)
+          ? doc.textures.map(t => t && t.__uuid__).filter(Boolean) : [];
+        extras = { textures };
+        if (doc.atlasText) extras.atlasInline = true;
+      } catch { /* best-effort */ }
+    }
     try {
-      await writeAssetMeta(primaryFile, { uuid, klass: className });
+      await writeAssetMeta(primaryFile, { uuid, klass: className, extras });
     } catch {
       // best-effort
     }
