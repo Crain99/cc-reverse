@@ -40,7 +40,24 @@ const DataTypeID = Object.freeze({
   CustomizedClass: 10,
   Dict: 11,
   Array: 12,
+  TypedArray: 13,
+  TypedArray_Class: 14,
 });
+
+const TYPED_ARRAY_CTORS = [
+  'Int8Array', 'Uint8Array', 'Int16Array', 'Uint16Array',
+  'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array',
+  'Uint8ClampedArray',
+];
+
+function decodeTypedArray(value) {
+  if (!Array.isArray(value)) return value;
+  const tag = value[0];
+  const data = value[1];
+  const ctor = TYPED_ARRAY_CTORS[tag];
+  if (ctor) return { __type__: ctor, __data__: typeof data === 'string' ? data : '' };
+  return { __type__: 'unknown', __data__: typeof data === 'string' ? data : '', __ctor__: tag };
+}
 
 const File = Object.freeze({
   Version: 0,
@@ -331,6 +348,16 @@ function assignByType(ctx, owner, key, dataType, value) {
       return;
     case DataTypeID.Array:
       owner[key] = decodeArray(ctx, value);
+      return;
+    case DataTypeID.TypedArray:
+      owner[key] = decodeTypedArray(value);
+      return;
+    case DataTypeID.TypedArray_Class:
+      if (Array.isArray(value)) {
+        owner[key] = value.map(decodeTypedArray);
+      } else {
+        owner[key] = value;
+      }
       return;
     default:
       owner[key] = value;
