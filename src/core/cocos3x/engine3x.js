@@ -25,7 +25,7 @@ const { uuidUtils } = require('../../utils/uuidUtils');
 const { parseBundleConfig, getImportPath, getNativePath } = require('./bundleConfig');
 const { isCcon, decodeCcon } = require('./ccon');
 const { inspect } = require('./deserializer');
-const { rehydrateIFileData } = require('./rehydrate');
+const { rehydrateIFileData, rehydrateIPackedFileData } = require('./rehydrate');
 const { writeCocos2xProject } = require('./projectScaffold');
 const { RecoveryReport } = require('./recoveryReport');
 
@@ -598,10 +598,17 @@ async function extractPackSection(cfg, packUuid, position) {
 
 function tryRehydrate(doc) {
   try {
+    if (doc && typeof doc === 'object' && !Array.isArray(doc) && Array.isArray(doc.sections)) {
+      return rehydrateIPackedFileData(doc);
+    }
+    if (Array.isArray(doc) && doc.length >= 6 && Array.isArray(doc[5]) && Array.isArray(doc[5][0])
+        && Array.isArray(doc[5][0][0])) {
+      // Heuristic: array-form pack — sections live at [5] and each section is itself
+      // a length-6 array starting with the instances array.
+      const sections = rehydrateIPackedFileData(doc);
+      if (sections) return sections;
+    }
     if (!Array.isArray(doc) || doc.length < 6) return null;
-    // Skip IPackedFileData ({ sections: [...] }) for now — would need to
-    // split each section out to its own file. Preserving raw JSON is fine.
-    if (doc && typeof doc === 'object' && Array.isArray(doc.sections)) return null;
     return rehydrateIFileData(doc);
   } catch {
     return null;

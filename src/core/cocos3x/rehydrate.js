@@ -611,8 +611,63 @@ function extractPropTypeOffset(def) {
   return 0;
 }
 
+/**
+ * Rehydrate an IPackedFileData (a multi-section pack) by splicing the shared
+ * header onto each section to form a standalone IFileData and rehydrating that.
+ *
+ * Accepts both forms:
+ *   - Array form: [version, sharedUuids, sharedStrings, sharedClasses,
+ *                  sharedMasks, sections[]]
+ *   - Object form: { sections: [...], plus shared* keys (rare 3.0–3.2) }
+ *
+ * @param {any} doc
+ * @returns {Array<any[]>|null} array of rehydrated source-format arrays (one per
+ *   section), or null if the input doesn't look like a pack.
+ */
+function rehydrateIPackedFileData(doc) {
+  if (doc == null) return null;
+
+  let version, sharedUuids, sharedStrings, sharedClasses, sharedMasks, sections;
+
+  if (Array.isArray(doc) && doc.length >= 6 && Array.isArray(doc[5])) {
+    [version, sharedUuids, sharedStrings, sharedClasses, sharedMasks, sections] = doc;
+  } else if (doc && typeof doc === 'object' && !Array.isArray(doc) && Array.isArray(doc.sections)) {
+    version = doc.version != null ? doc.version : 1;
+    sharedUuids = doc.sharedUuids || [];
+    sharedStrings = doc.sharedStrings || [];
+    sharedClasses = doc.sharedClasses || [];
+    sharedMasks = doc.sharedMasks || [];
+    sections = doc.sections;
+  } else {
+    return null;
+  }
+
+  if (!Array.isArray(sections) || !Array.isArray(sharedClasses)) return null;
+
+  const out = [];
+  for (const section of sections) {
+    if (!Array.isArray(section)) { out.push(null); continue; }
+    const standalone = [
+      version,
+      sharedUuids,
+      sharedStrings,
+      sharedClasses,
+      sharedMasks,
+      section[0] || [],   // instances
+      section[1] || 0,    // instanceTypes
+      section[2] || null, // refs
+      section[3] || [],   // dependObjs
+      section[4] || [],   // dependKeys
+      section[5] || [],   // dependUuidIndices
+    ];
+    out.push(rehydrateIFileData(standalone));
+  }
+  return out;
+}
+
 module.exports = {
   rehydrateIFileData,
+  rehydrateIPackedFileData,
   DataTypeID,
   File,
   VALUE_TYPE_CONSTRUCTORS,
