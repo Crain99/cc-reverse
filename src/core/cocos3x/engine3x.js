@@ -27,6 +27,7 @@ const { isCcon, decodeCcon } = require('./ccon');
 const { inspect } = require('./deserializer');
 const { rehydrateIFileData } = require('./rehydrate');
 const { writeCocos2xProject } = require('./projectScaffold');
+const { RecoveryReport } = require('./recoveryReport');
 
 const readFile = promisify(fs.readFile);
 const writeFile = promisify(fs.writeFile);
@@ -115,6 +116,7 @@ async function reverseProject3x(options) {
     scripts: { total: 0 },
     warnings: [],
   };
+  const report = new RecoveryReport();
 
   if (!scriptsOnly) {
     const bundles = await discoverBundles(sourcePath);
@@ -126,7 +128,7 @@ async function reverseProject3x(options) {
         continue;
       }
       try {
-        const result = await unpackBundle({ bundleDir, outputPath, verbose });
+        const result = await unpackBundle({ bundleDir, outputPath, verbose, report });
         summary.bundles.push(result);
       } catch (err) {
         logger.error(`Failed to unpack bundle ${name}:`, err);
@@ -153,7 +155,7 @@ async function reverseProject3x(options) {
     await writeProjectDescriptor(outputPath);
   }
 
-  await writeRecoveryReport(outputPath, summary, sourcePath);
+  await writeRecoveryReport(outputPath, summary, sourcePath, report);
   return summary;
 }
 
@@ -248,7 +250,7 @@ async function discoverBundles(sourcePath) {
 /**
  * Unpack a single bundle. Returns a summary record.
  */
-async function unpackBundle({ bundleDir, outputPath, verbose }) {
+async function unpackBundle({ bundleDir, outputPath, verbose, report }) {
   const cfgPath = path.join(bundleDir, 'config.json');
   const raw = JSON.parse(await readFile(cfgPath, 'utf-8'));
   const cfg = parseBundleConfig(raw, bundleDir);
@@ -296,9 +298,14 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
       handled.add(uuid);
       if (ok) result.recovered += 1;
       else result.missing += 1;
+      if (report) {
+        if (ok) report.ok(cfg.name, uuid, info.type || 'cc.Asset');
+        else report.miss(cfg.name, uuid, info.type || 'cc.Asset');
+      }
     } catch (err) {
       result.warnings.push(`${info.path}: ${err.message}`);
-      logger.debug(`Asset ${uuid} (${info.path}) failed: ${err.message}`);
+      logger.warn(`资源失败 [${cfg.name}] ${uuid}: ${err.message}`);
+      if (report) report.fail(cfg.name, uuid, info.type || 'unknown', err);
     }
   }
 
@@ -317,8 +324,14 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
       handled.add(uuid);
       if (ok) result.recovered += 1;
       else result.missing += 1;
+      if (report) {
+        if (ok) report.ok(cfg.name, uuid, 'cc.SceneAsset');
+        else report.miss(cfg.name, uuid, 'cc.SceneAsset');
+      }
     } catch (err) {
       result.warnings.push(`scene ${sceneName}: ${err.message}`);
+      logger.warn(`资源失败 [${cfg.name}] scene ${sceneName}: ${err.message}`);
+      if (report) report.fail(cfg.name, uuid, 'cc.SceneAsset', err);
     }
   }
 
@@ -336,9 +349,14 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
       const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose });
       handled.add(uuid);
       if (ok) result.recovered += 1;
+      if (report) {
+        if (ok) report.ok(cfg.name, uuid, 'cc.Asset');
+        else report.miss(cfg.name, uuid, 'cc.Asset');
+      }
     } catch (err) {
       // These are often internal/packed — don't count as warnings.
       logger.debug(`Packed uuid ${uuid} skipped: ${err.message}`);
+      if (report) report.fail(cfg.name, uuid, 'unknown', err);
     }
   }
 
@@ -828,7 +846,7 @@ async function writeProjectDescriptor(outputPath) {
   );
 }
 
-async function writeRecoveryReport(outputPath, summary, sourcePath) {
+async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
   const lines = [];
   lines.push('# Recovery Report');
   lines.push('');
@@ -855,6 +873,9 @@ async function writeRecoveryReport(outputPath, summary, sourcePath) {
     lines.push('## Warnings');
     lines.push('');
     for (const w of summary.warnings) lines.push(`- ${w}`);
+  }
+  if (report) {
+    lines.push('', '---', '', report.toMarkdown());
   }
   await writeFile(path.join(outputPath, 'RECOVERY_REPORT.md'), lines.join('\n'));
 }
