@@ -2,7 +2,9 @@ const recoveryReport = require('./gates/recoveryReport');
 const cconV2         = require('./gates/cconV2');
 const typedArrays    = require('./gates/typedArrays');
 const layeredScripts = require('./gates/layeredScripts');
-const ALL = { recoveryReport, cconV2, typedArrays, layeredScripts };
+const recoveryIndex  = require('./gates/recoveryIndex');
+const tsProject      = require('./gates/tsProject');
+const ALL = { recoveryReport, cconV2, typedArrays, layeredScripts, recoveryIndex, tsProject };
 function runGates(outputDir, { gates = Object.keys(ALL) } = {}) {
   const results = { passed: [], failed: [] };
   for (const name of gates) {

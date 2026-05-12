@@ -60,3 +60,52 @@ describe('validate gate: layeredScripts', () => {
     expect(r.passed.map(p => p.name)).toContain('layeredScripts');
   });
 });
+
+describe('validate gate: recoveryIndex', () => {
+  it('passes when index maps each uuid to an existing path', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ri-'));
+    const root = path.join(tmp, 'assets', 'scripts');
+    fs.mkdirSync(path.join(root, 'main'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'main', 'Player.ts'), '// ok');
+    fs.writeFileSync(
+      path.join(root, 'RECOVERY_INDEX.json'),
+      JSON.stringify({ 'p-u': { path: 'main/Player.ts', className: 'Player' } })
+    );
+    const r = runGates(tmp, { gates: ['recoveryIndex'] });
+    expect(r.failed).toEqual([]);
+    expect(r.passed.map(p => p.name)).toContain('recoveryIndex');
+  });
+
+  it('fails when index references a missing path', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ri-'));
+    const root = path.join(tmp, 'assets', 'scripts');
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'RECOVERY_INDEX.json'),
+      JSON.stringify({ 'p-u': { path: 'main/Missing.ts', className: 'Player' } })
+    );
+    const r = runGates(tmp, { gates: ['recoveryIndex'] });
+    expect(r.failed.map(p => p.name)).toContain('recoveryIndex');
+  });
+
+  it('passes (informational) when no RECOVERY_INDEX.json exists', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ri-'));
+    const r = runGates(tmp, { gates: ['recoveryIndex'] });
+    expect(r.failed).toEqual([]);
+    expect(r.passed.map(p => p.name)).toContain('recoveryIndex');
+  });
+});
+
+describe('validate gate: tsProject', () => {
+  it('passes (informational) when tsconfig.json + .ts files present', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ts-'));
+    const root = path.join(tmp, 'assets', 'scripts');
+    fs.mkdirSync(path.join(root, 'main'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'tsconfig.json'), '{}');
+    fs.writeFileSync(path.join(root, 'main', 'A.ts'), 'export {};');
+    fs.writeFileSync(path.join(root, 'main', 'B.ts'), 'export {};');
+    const r = runGates(tmp, { gates: ['tsProject'] });
+    expect(r.failed).toEqual([]);
+    expect(r.passed.map(p => p.name)).toContain('tsProject');
+  });
+});
