@@ -134,3 +134,6 @@ CLAUDE.md
 
 # Superpowers
 docs/superpowers/
+
+# Local worktrees
+.worktrees/
