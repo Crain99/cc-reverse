@@ -20,12 +20,9 @@ describe('Layer 3: classRestorer', () => {
     const ast = parse(src, { sourceType: 'module' });
     const out = await restoreClasses(ast, { name: 'Player' });
     const code = generate(out).code;
-    // Either webcrack collapsed it into native class syntax, OR fail-closed kept
-    // the original IIFE — in the latter case at least __extends + onLoad survive.
-    const hasNativeClass = /class\s+Player\s+extends\s+Component/.test(code);
-    const hasFallback = /__extends\s*\(\s*Player/.test(code);
-    expect(hasNativeClass || hasFallback).toBe(true);
-    expect(code).toMatch(/onLoad/);
+    expect(code).toMatch(/class\s+Player\s+extends\s+Component/);
+    expect(code).toMatch(/onLoad\s*\(\s*\)/);
+    expect(code).not.toMatch(/__extends\s*\(\s*Player/);
   });
 
   it('collapses __decorate(..., Class) into a decorator', async () => {
