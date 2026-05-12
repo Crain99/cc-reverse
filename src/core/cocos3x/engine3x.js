@@ -639,16 +639,15 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
   await writeMeta(outBase, uuid, className, importFromCcon, importPackRef);
 
   // R12 — emit a richer editor-style .meta for non-script assets when class
-  // maps to a known importer and we haven't already written one at the
-  // asset's primary file path.
+  // maps to a known importer. We unconditionally overwrite any legacy stub
+  // produced by writeMeta() above (PR 6 carry-over #1: pure-native classes
+  // like cc.BufferAsset have primaryExt='' so richMetaPath collides with
+  // the stub path, and the rich meta is the intended editor-facing output).
   if ((importRecovered || nativeRecovered) && KLASS_TO_IMPORTER[className]) {
     const primaryExt = isPureNativeClass(className) ? '' : inferImportExt(className);
     const primaryFile = outBase + primaryExt;
-    const richMetaPath = primaryFile + '.meta';
     try {
-      if (!(await pathExists(richMetaPath))) {
-        await writeAssetMeta(primaryFile, { uuid, klass: className });
-      }
+      await writeAssetMeta(primaryFile, { uuid, klass: className });
     } catch {
       // best-effort
     }
