@@ -15,6 +15,8 @@
  *     u8[chunkLen] data
  */
 
+const { decodeNotepack } = require('./notepack');
+
 const CCON_MAGIC = 0x4E4F4343;
 
 /**
@@ -62,12 +64,20 @@ function decodeCcon(buf) {
     throw new Error('decodeCcon: json blob exceeds buffer');
   }
 
-  const rawJson = buf.slice(jsonStart, jsonEnd);
+  const rawJsonBuf = buf.slice(jsonStart, jsonEnd);
 
   let document = null;
+  let rawJson = null;
   if (version === 1) {
-    const text = rawJson.toString('utf-8');
-    document = JSON.parse(text);
+    document = JSON.parse(rawJsonBuf.toString('utf-8'));
+  } else if (version === 2) {
+    try {
+      document = decodeNotepack(rawJsonBuf);
+    } catch {
+      rawJson = rawJsonBuf;
+    }
+  } else {
+    rawJson = rawJsonBuf;
   }
 
   // Chunks follow, aligned to 8 bytes after the JSON blob.
@@ -93,11 +103,8 @@ function decodeCcon(buf) {
   }
 
   const result = { version, chunks };
-  if (document !== null) {
-    result.document = document;
-  } else {
-    result.rawJson = rawJson;
-  }
+  if (document !== null) result.document = document;
+  if (rawJson !== null) result.rawJson = rawJson;
   return result;
 }
 
