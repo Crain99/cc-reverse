@@ -18,3 +18,28 @@ describe('scriptRecovery pipeline', () => {
     expect(result.errors.some((e) => e.layer === 'esmRebuilder')).toBe(true);
   });
 });
+
+describe('scriptRecovery pipeline — layers 4-6', () => {
+  it('runs ccclassNamer / typeInferer when provided as overrides', async () => {
+    const calls = [];
+    const result = await runScriptRecoveryPipeline({
+      chunks: [{ name: 'a.js', source: 'System.register("m", [], function(){return {execute:function(){}}})' }],
+      layers: {
+        ccclassNamer: (mods) => { calls.push('namer'); return mods; },
+        typeInferer: (mods) => { calls.push('infer'); return mods; },
+      },
+    });
+    expect(calls).toEqual(['namer', 'infer']);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('continues remaining layers when ccclassNamer crashes', async () => {
+    const result = await runScriptRecoveryPipeline({
+      chunks: [{ name: 'a.js', source: 'System.register("m", [], function(){return {execute:function(){}}})' }],
+      layers: {
+        ccclassNamer: () => { throw new Error('boom'); },
+      },
+    });
+    expect(result.errors.some((e) => e.layer === 'ccclassNamer')).toBe(true);
+  });
+});

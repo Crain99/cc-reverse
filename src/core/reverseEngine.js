@@ -38,6 +38,7 @@ async function reverseProject(options) {
     bundle,
     assetsOnly = false,
     scriptsOnly = false,
+    scriptLayers,
   } = options;
 
   // 全局配置初始化
@@ -58,6 +59,7 @@ async function reverseProject(options) {
       bundleFilter: Array.isArray(bundle) ? bundle : (bundle ? [bundle] : []),
       assetsOnly,
       scriptsOnly,
+      scriptLayers,
       key: key || global.config.decrypt?.key,
       verbose,
     });
