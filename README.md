@@ -55,13 +55,23 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 
 ### Script recovery (3.x)
 
-In addition to the legacy raw chunk copy under `assets/Scripts/`, the unpacker now produces a layered output under `assets/scripts/<chunkBase>/<module>.js`:
+The unpacker drives a 6-layer script recovery pipeline. Output is emitted in two coexisting layouts (PR 5 will retire the legacy one):
 
-1. **Layer 1** splits each `System.register(...)` into one module per registered class.
-2. **Layer 2** restores ESM `import` / `export` syntax from the SystemJS setters and `_export` calls.
-3. **Layer 3** uses webcrack to undo TypeScript's ES5 `__extends` helper, then folds `__decorate([...], Class)` assignments into native decorator syntax.
+- **Legacy** (`--script-layers <= 0` or always for backward compat): raw chunk copy under `assets/Scripts/`.
+- **Layered** (`--script-layers <n>`, default `6`): per-module files under `assets/scripts/<bundle>/<module>.{js|ts}`.
 
-Future PRs add Layer 4 (ccclass naming + UUID mapping), Layer 5 (typed-field inference from scenes), Layer 6 (TS project emission with tsconfig), and Layer 7 (optional humanify pass for minified identifiers).
+Layers:
+
+1. **Layer 1 (chunkSplitter)** splits each `System.register(...)` into one module per registered class.
+2. **Layer 2 (esmRebuilder)** restores ESM `import` / `export` syntax from the SystemJS setters and `_export` calls.
+3. **Layer 3 (classRestorer)** uses webcrack to undo TypeScript's ES5 `__extends` helper, then folds `__decorate([...], Class)` assignments into native decorator syntax.
+4. **Layer 4 (ccclassNamer)** scans `_RF.push(module, uuid, name)` calls and `@ccclass('Name')` decorators to recover the original class name + per-module UUID map.
+5. **Layer 5 (typeInferer)** scans recovered scenes / prefabs (`assets/<bundle>/**/*.scene|*.prefab`) and infers field types from `__type__` references.
+6. **Layer 6 (tsProjectEmitter)** emits `.ts` files via `ts-morph` (formatted with `prettier`), writes a top-level `tsconfig.json`, and emits `RECOVERY_INDEX.json` mapping ccclass -> { uuid, file }.
+
+After install, run `npm install` to pull the new deps (`ts-morph`, `prettier`). Use `--script-layers 3` to stop at the JS-with-decorators stage if you don't want the TS project.
+
+Future PR 5 adds Layer 7 (optional humanify pass for minified identifiers) and retires the legacy `assets/Scripts/` copy.
 
 ## 安装
 
@@ -103,6 +113,7 @@ npm start -- --path <源项目路径>
   -k, --key <key>          JSC 文件的 XXTEA 加密密钥
   --version-hint <version> 提示Cocos Creator版本 (2.3.x|2.4.x|3.x)
   --bundle <name>          仅处理指定 bundle (3.x，可重复)
+  --script-layers <n>      脚本恢复层数 1-6 (3.x，默认 6)
   --assets-only            跳过脚本阶段
   --scripts-only           跳过资源阶段
   -h, --help               显示帮助信息
