@@ -3,20 +3,27 @@
 const { splitChunks: defaultSplit } = require('./chunkSplitter');
 const { rebuildEsm: defaultRebuild } = require('./esmRebuilder');
 const { restoreClasses: defaultRestore } = require('./classRestorer');
+const { applyCcclassNames: defaultNamer } = require('./ccclassNamer');
+const { inferFieldTypes: defaultInferer } = require('./typeInferer');
+const { emitTsProject: defaultEmitter } = require('./tsProjectEmitter');
 
 /**
- * Drive the 3-layer script recovery pipeline.
+ * Drive the 6-layer script recovery pipeline.
  *
  * @param {object} input
  * @param {Array<{name:string, source:string}>} input.chunks
  * @param {object} [input.layers] — overrides per layer for testing
- * @returns {Promise<{modules: Array, errors: Array}>}
+ * @param {object} [input.context] — shared context passed to layers 4-6
+ * @returns {Promise<{modules: Array, errors: Array, emit: object|null}>}
  */
 async function runScriptRecoveryPipeline(input) {
-  const { chunks = [], layers = {} } = input;
+  const { chunks = [], layers = {}, context = {} } = input;
   const split = layers.chunkSplitter || defaultSplit;
   const rebuild = layers.esmRebuilder || defaultRebuild;
   const restore = layers.classRestorer || defaultRestore;
+  const namer = layers.ccclassNamer || defaultNamer;
+  const inferer = layers.typeInferer || defaultInferer;
+  const emitter = layers.tsProjectEmitter; // emitter is opt-in (engine wires it)
   const errors = [];
 
   let modules = [];
@@ -39,7 +46,29 @@ async function runScriptRecoveryPipeline(input) {
     catch (err) { errors.push({ layer: 'classRestorer', module: m.name, message: err.message }); }
   }
 
-  return { modules, errors };
+  // Layer 4 sees the whole module set so UUID maps can dedupe across files.
+  try {
+    modules = (await namer(modules, context)) || modules;
+  } catch (err) {
+    errors.push({ layer: 'ccclassNamer', message: err.message });
+  }
+
+  try {
+    modules = (await inferer(modules, context)) || modules;
+  } catch (err) {
+    errors.push({ layer: 'typeInferer', message: err.message });
+  }
+
+  let emit = null;
+  if (emitter) {
+    try {
+      emit = await emitter(modules, context);
+    } catch (err) {
+      errors.push({ layer: 'tsProjectEmitter', message: err.message });
+    }
+  }
+
+  return { modules, errors, emit };
 }
 
 module.exports = { runScriptRecoveryPipeline };
