@@ -279,3 +279,16 @@ MIT
 ## 贡献
 
 欢迎提交问题报告和改进建议！
+
+## Validation
+
+After running a 3.x reverse, you can verify the output integrity:
+
+```bash
+npm run validate path/to/output-dir
+```
+
+This runs the gate suite defined under `src/validate/gates/`. Currently includes:
+- `recoveryReport`: cross-checks `RECOVERY_REPORT.md` counts against the file count under `assets/`.
+
+The unpack also emits `RECOVERY_REPORT.md` listing per-bundle ok/failed/missed counts and a list of failed assets with reasons.
