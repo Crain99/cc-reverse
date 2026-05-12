@@ -53,6 +53,16 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - 加密：仅 bundle 级 `index.jsc`，可通过 `--key` 传入或从 `application.js` / `src/settings.json` 自动抽取
 - 使用 `--version-hint 3.x` 强制指定版本；`--bundle <name>` 只处理指定 bundle（可重复）
 
+### Script recovery (3.x)
+
+In addition to the legacy raw chunk copy under `assets/Scripts/`, the unpacker now produces a layered output under `assets/scripts/<chunkBase>/<module>.js`:
+
+1. **Layer 1** splits each `System.register(...)` into one module per registered class.
+2. **Layer 2** restores ESM `import` / `export` syntax from the SystemJS setters and `_export` calls.
+3. **Layer 3** uses webcrack to undo TypeScript's ES5 `__extends` helper, then folds `__decorate([...], Class)` assignments into native decorator syntax.
+
+Future PRs add Layer 4 (ccclass naming + UUID mapping), Layer 5 (typed-field inference from scenes), Layer 6 (TS project emission with tsconfig), and Layer 7 (optional humanify pass for minified identifiers).
+
 ## 安装
 
 ### 全局安装

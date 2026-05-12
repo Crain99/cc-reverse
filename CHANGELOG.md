@@ -5,6 +5,16 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## PR 3 — Wave / Script Recovery Layers 1-3 (webcrack integration)
+
+- **Layer 1 (chunkSplitter):** parses `src/chunks/*.js` and splits each `System.register(...)` call into a discrete module with deps and setter bindings.
+- **Layer 2 (esmRebuilder):** rewrites SystemJS execute body into top-level `import` / `export` statements; drops `_export("name", void 0)` placeholders.
+- **Layer 3 (classRestorer):** drives webcrack `unminify` to collapse `__extends` IIFEs back into native `class extends` syntax; folds `__decorate([...], Class)` assignments into `@decorator class Class { ... }`.
+- **Pipeline driver** with fail-closed semantics — any layer crash leaves downstream layers running on the last good AST.
+- **Integration:** `engine3x.recoverScripts` now also emits layered output under `assets/scripts/<chunk>/<module>.js` alongside the legacy raw copy under `assets/Scripts/`.
+- **New gate:** `layeredScripts` (informational) — reports counts of layered files and how many include `import` statements.
+- New dep: `webcrack@^2.16.0`.
+
 ### Added (PR 2, Wave 1)
 - R5: CCON v2 (notepack) decoder — `.cconb` files at version 2 now produce real documents.
 - R6: Full IPackedFileData rehydrate — multi-section packs are split and each section rehydrated.
