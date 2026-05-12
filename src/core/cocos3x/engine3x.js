@@ -28,7 +28,7 @@ const { inspect } = require('./deserializer');
 const { rehydrateIFileData, rehydrateIPackedFileData } = require('./rehydrate');
 const { writeCocos2xProject } = require('./projectScaffold');
 const { RecoveryReport } = require('./recoveryReport');
-const { runScriptRecoveryPipeline } = require('./scriptRecovery');
+const { runScriptRecoveryPipeline, emitTsProject } = require('./scriptRecovery');
 const generatorModule = require('@babel/generator');
 const generate = generatorModule.default || generatorModule;
 
@@ -107,6 +107,7 @@ async function reverseProject3x(options) {
     bundleFilter,
     assetsOnly = false,
     scriptsOnly = false,
+    scriptLayers,
     verbose = false,
   } = options;
 
@@ -157,7 +158,7 @@ async function reverseProject3x(options) {
   }
 
   if (!assetsOnly) {
-    summary.scripts = await recoverScripts(sourcePath, outputPath, verbose);
+    summary.scripts = await recoverScripts(sourcePath, outputPath, verbose, { scriptLayers });
   }
 
   const projectFlavor = await detectProjectFlavor(sourcePath);
@@ -830,7 +831,7 @@ function classToImporter(className) {
  *
  * 3.x ships TypeScript compiled to ES5. We preserve filenames where possible.
  */
-async function recoverScripts(sourcePath, outputPath, verbose) {
+async function recoverScripts(sourcePath, outputPath, verbose, scriptOptions = {}) {
   const candidates = [
     path.join(sourcePath, 'src', 'chunks'),
     path.join(sourcePath, 'src'),
@@ -895,7 +896,7 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
   }
 
   try {
-    const layered = await recoverScriptsLayered(sourcePath, outputPath, verbose);
+    const layered = await recoverScriptsLayered(sourcePath, outputPath, verbose, scriptOptions);
     if (verbose && layered.modulesEmitted) {
       logger.debug(`LayeredScripts: ${layered.modulesEmitted} modules emitted, ${layered.errors.length} errors`);
     }
@@ -912,9 +913,10 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
  *
  * Silently skipped when no chunks file is found — keeps non-3.x projects unaffected.
  */
-async function recoverScriptsLayered(sourcePath, outputPath, verbose) {
+async function recoverScriptsLayered(sourcePath, outputPath, verbose, options = {}) {
+  const scriptLayers = options.scriptLayers != null ? options.scriptLayers : 6;
   const chunksDir = path.join(sourcePath, 'src', 'chunks');
-  if (!(await pathExists(chunksDir))) return { modulesEmitted: 0, errors: [] };
+  if (!(await pathExists(chunksDir))) return { modulesEmitted: 0, tsFilesEmitted: 0, errors: [] };
   const entries = await readdir(chunksDir);
   const chunks = [];
   for (const entry of entries) {
@@ -923,29 +925,75 @@ async function recoverScriptsLayered(sourcePath, outputPath, verbose) {
     const source = await readFile(full, 'utf8');
     chunks.push({ name: entry, source });
   }
-  if (chunks.length === 0) return { modulesEmitted: 0, errors: [] };
+  if (chunks.length === 0) return { modulesEmitted: 0, tsFilesEmitted: 0, errors: [] };
 
-  let totalEmitted = 0;
+  const scenes = await collectRecoveredScenes(outputPath);
+
   const allErrors = [];
+  let allModules = [];
   for (const chunk of chunks) {
-    const { modules, errors } = await runScriptRecoveryPipeline({ chunks: [chunk] });
-    allErrors.push(...errors);
     const baseName = chunk.name.replace(/\.js$/, '');
-    const outDir = path.join(outputPath, 'assets', 'scripts', baseName);
-    for (const m of modules) {
-      if (!m.ast) continue;
-      try {
-        const code = generate(m.ast, { compact: false }).code;
-        await mkdir(outDir, { recursive: true });
-        await writeFile(path.join(outDir, `${m.name}.js`), code);
-        if (verbose) logger.debug(`LayeredScript: ${baseName}/${m.name}.js`);
-        totalEmitted += 1;
-      } catch (err) {
-        allErrors.push({ layer: 'emit', module: m.name, message: err.message });
-      }
+    const { modules, errors } = await runScriptRecoveryPipeline({
+      chunks: [chunk],
+      context: { scenes, bundle: baseName },
+    });
+    allErrors.push(...errors);
+    for (const m of modules) m.bundle = baseName;
+    allModules = allModules.concat(modules);
+  }
+
+  // Layer 6: emit TS project if requested.
+  let tsFilesEmitted = 0;
+  if (scriptLayers >= 6) {
+    try {
+      const emit = await emitTsProject(allModules, { outRoot: path.join(outputPath, 'assets', 'scripts') });
+      tsFilesEmitted = emit.filesEmitted;
+      if (emit.errors) allErrors.push(...emit.errors);
+    } catch (err) {
+      allErrors.push({ layer: 'tsProjectEmitter', message: err.message });
     }
   }
-  return { modulesEmitted: totalEmitted, errors: allErrors };
+
+  // Legacy .js output (PR 3 path) remains for parity until PR 5 retires it.
+  let totalEmitted = 0;
+  for (const m of allModules) {
+    if (!m.ast) continue;
+    try {
+      const code = generate(m.ast, { compact: false }).code;
+      const outDir = path.join(outputPath, 'assets', 'scripts', m.bundle);
+      await mkdir(outDir, { recursive: true });
+      await writeFile(path.join(outDir, `${m.name}.js`), code);
+      if (verbose) logger.debug(`LayeredScript: ${m.bundle}/${m.name}.js`);
+      totalEmitted += 1;
+    } catch (err) {
+      allErrors.push({ layer: 'emit', module: m.name, message: err.message });
+    }
+  }
+  return { modulesEmitted: totalEmitted, tsFilesEmitted, errors: allErrors };
+}
+
+async function collectRecoveredScenes(outputPath) {
+  const out = [];
+  const root = path.join(outputPath, 'assets');
+  if (!(await pathExists(root))) return out;
+  for await (const f of walkJsonFiles(root)) {
+    try {
+      const text = await readFile(f, 'utf8');
+      if (!text.trimStart().startsWith('[')) continue;
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) out.push(parsed);
+    } catch { /* skip */ }
+  }
+  return out;
+}
+
+async function* walkJsonFiles(root) {
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const e of entries) {
+    const p = path.join(root, e.name);
+    if (e.isDirectory()) yield* walkJsonFiles(p);
+    else if (e.isFile() && e.name.endsWith('.json')) yield p;
+  }
 }
 
 async function* walkJsFiles(root) {
