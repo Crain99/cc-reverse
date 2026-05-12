@@ -108,4 +108,60 @@ describe('validate gate: tsProject', () => {
     expect(r.failed).toEqual([]);
     expect(r.passed.map(p => p.name)).toContain('tsProject');
   });
+
+  it('passes with no detail when assets/scripts/ does not exist', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ts-'));
+    const r = runGates(tmp, { gates: ['tsProject'] });
+    expect(r.failed).toEqual([]);
+    expect(r.passed.map(p => p.name)).toContain('tsProject');
+  });
+
+  it('pass surfaces file count + tsconfig presence in detail', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ts-'));
+    const root = path.join(tmp, 'assets', 'scripts');
+    fs.mkdirSync(path.join(root, 'main'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'tsconfig.json'), '{}');
+    fs.writeFileSync(path.join(root, 'main', 'A.ts'), 'export {};');
+    const r = runGates(tmp, { gates: ['tsProject'] });
+    const passed = r.passed.find(p => p.name === 'tsProject');
+    expect(passed).toBeTruthy();
+    expect(passed.detail).toMatch(/1 \.ts file/);
+    expect(passed.detail).toMatch(/tsconfig\.json present/);
+  });
+});
+
+describe('validate gate: recoveryIndex (detail enumeration)', () => {
+  it('caps enumeration at 10 entries and reports remainder count', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ri-'));
+    const root = path.join(tmp, 'assets', 'scripts');
+    fs.mkdirSync(root, { recursive: true });
+    const idx = {};
+    for (let i = 0; i < 13; i++) {
+      idx[`u${i}`] = { path: `main/M${i}.ts`, className: `M${i}` };
+    }
+    fs.writeFileSync(path.join(root, 'RECOVERY_INDEX.json'), JSON.stringify(idx));
+    const r = runGates(tmp, { gates: ['recoveryIndex'] });
+    const failed = r.failed.find(p => p.name === 'recoveryIndex');
+    expect(failed).toBeTruthy();
+    expect(failed.detail).toMatch(/13 missing entries/);
+    expect(failed.detail).toMatch(/\(\+3 more\)/);
+  });
+
+  it('failure detail enumerates all missing entries', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-ri-'));
+    const root = path.join(tmp, 'assets', 'scripts');
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'RECOVERY_INDEX.json'),
+      JSON.stringify({
+        a: { path: 'main/A.ts', className: 'A' },
+        b: { path: 'main/B.ts', className: 'B' },
+      })
+    );
+    const r = runGates(tmp, { gates: ['recoveryIndex'] });
+    const failed = r.failed.find(p => p.name === 'recoveryIndex');
+    expect(failed).toBeTruthy();
+    expect(failed.detail).toMatch(/main\/A\.ts/);
+    expect(failed.detail).toMatch(/main\/B\.ts/);
+  });
 });

@@ -30,7 +30,9 @@ module.exports = function recoveryIndex(outDir) {
     }
   }
   if (missing.length) {
-    return `${missing.length} missing entries; first: ${missing[0]}`;
+    const list = missing.slice(0, 10).join(', ');
+    const more = missing.length > 10 ? ` (+${missing.length - 10} more)` : '';
+    return `${missing.length} missing entries: ${list}${more}`;
   }
   return true;
 };

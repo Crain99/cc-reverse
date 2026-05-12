@@ -13,10 +13,10 @@ module.exports = function tsProject(outDir) {
   if (!fs.existsSync(root)) return true;
   const tsFiles = walk(root);
   const hasTsconfig = fs.existsSync(path.join(root, 'tsconfig.json'));
-  // Informational; always pass. Counts kept for future structured detail.
-  void tsFiles;
-  void hasTsconfig;
-  return true;
+  return {
+    ok: true,
+    detail: `${tsFiles.length} .ts file(s); tsconfig.json ${hasTsconfig ? 'present' : 'absent'}`,
+  };
 };
 
 function walk(dir) {

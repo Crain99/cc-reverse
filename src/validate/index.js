@@ -11,8 +11,16 @@ function runGates(outputDir, { gates = Object.keys(ALL) } = {}) {
     const g = ALL[name];
     if (!g) continue;
     try {
-      const ok = g(outputDir);
-      (ok === true ? results.passed : results.failed).push({ name, detail: ok });
+      const ret = g(outputDir);
+      if (ret === true) {
+        results.passed.push({ name, detail: true });
+      } else if (ret && typeof ret === 'object' && ret.ok === true) {
+        results.passed.push({ name, detail: ret.detail });
+      } else if (ret && typeof ret === 'object' && 'ok' in ret) {
+        results.failed.push({ name, detail: ret.detail });
+      } else {
+        results.failed.push({ name, detail: ret });
+      }
     } catch (e) { results.failed.push({ name, detail: e.message }); }
   }
   return results;
