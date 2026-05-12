@@ -86,7 +86,7 @@ async function reverseProject(options) {
   const jscFiles = scanJscFiles(sourcePath);
   let codePath = sourcePath;
   if (jscFiles.length > 0) {
-    const decryptKey = key || global.config.decrypt?.key || extractKeyFromProject(sourcePath);
+    const decryptKey = key || global.config.decrypt?.key || (await extractKeyFromProject(sourcePath));
     if (decryptKey) {
       const decryptOutputDir = path.resolve(tempPath, 'decrypted');
       await mkdir(decryptOutputDir, { recursive: true });
