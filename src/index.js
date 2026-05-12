@@ -21,14 +21,43 @@ program
   .option('--bundle <name>', '仅处理指定 bundle (3.x, 可重复)', collectList, [])
   .option('--assets-only', '跳过脚本阶段')
   .option('--scripts-only', '跳过资源阶段')
-  .option('--script-layers <n>', '脚本恢复层数 (1-6, 默认 6)', '6')
-  .parse(process.argv);
+  .option('--script-layers <n>', '脚本恢复层数 (1-6, 默认 6)', '6');
+
+program
+  .command('humanify <outDir>')
+  .description('[opt-in, Layer 7] rename minified identifiers via the user-installed humanify CLI')
+  .option('--provider <name>', 'local | openai', 'local')
+  .option('--base-url <url>', 'OpenAI-compatible base URL', process.env.OPENAI_BASE_URL)
+  .option('--api-key <key>', 'OpenAI-compatible API key', process.env.OPENAI_API_KEY)
+  .option('--model <name>', 'model name (openai)')
+  .action(async (outDir, opts) => {
+    const { runHumanify } = require('./core/cocos3x/scriptRecovery/humanify');
+    const r = await runHumanify(path.resolve(outDir), {
+      provider: opts.provider,
+      baseUrl: opts.baseUrl,
+      apiKey: opts.apiKey,
+      model: opts.model,
+    });
+    if (!r.ok) {
+      console.error('[humanify]', r.reason);
+      process.exit(1);
+    }
+    console.log('[humanify] output ->', r.outDir);
+    process.exit(0);
+  });
+
+program.parse(process.argv);
 
 function collectList(value, previous) {
   return previous.concat([value]);
 }
 
 const options = program.opts();
+
+// If a subcommand was invoked, skip the default reverse flow.
+if (program.args[0] === 'humanify') {
+  return;
+}
 
 // 通过命令行参数或环境变量获取路径
 const sourcePath = options.path || process.env.CC_SOURCE_PATH;
