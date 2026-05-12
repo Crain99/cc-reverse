@@ -222,24 +222,32 @@ function detectProjectVersion(sourcePath, versionHint) {
   }
 
   // Helper: check if a given directory looks like a Cocos Creator 3.x build.
+  // 3.x builds always emit a per-bundle "config.json" OR a hashed
+  // "config.<hash>.json" (e.g. wechatgame mini-game builds emit the latter).
+  function hasBundleConfig(bundleDir) {
+    if (!fs.existsSync(bundleDir)) return false;
+    try {
+      const files = fs.readdirSync(bundleDir);
+      return files.some(f => f === 'config.json' || /^config\.[0-9a-f]+\.json$/i.test(f));
+    } catch {
+      return false;
+    }
+  }
+
   function is3xRoot(root) {
-    // Any bundle config or an application.js is enough.
-    const candidates = [
-      path.join(root, 'assets', 'main', 'config.json'),
-      path.join(root, 'assets', 'internal', 'config.json'),
-      path.join(root, 'assets', 'resources', 'config.json'),
-      path.join(root, 'application.js'),
-      path.join(root, 'src', 'settings.json'),
-    ];
-    if (candidates.some(p => fs.existsSync(p))) return true;
-    // Fallback: any config.json at depth 2 under assets/
+    if (fs.existsSync(path.join(root, 'application.js'))) return true;
+    if (fs.existsSync(path.join(root, 'src', 'settings.json'))) return true;
+    for (const name of ['main', 'internal', 'resources']) {
+      if (hasBundleConfig(path.join(root, 'assets', name))) return true;
+    }
+    // Fallback: any bundle dir under assets/ with a (possibly hashed) config.
     const assetsDir = path.join(root, 'assets');
     if (fs.existsSync(assetsDir)) {
       try {
         const entries = fs.readdirSync(assetsDir, { withFileTypes: true });
         for (const e of entries) {
           if (!e.isDirectory()) continue;
-          if (fs.existsSync(path.join(assetsDir, e.name, 'config.json'))) return true;
+          if (hasBundleConfig(path.join(assetsDir, e.name))) return true;
         }
       } catch {
         // ignore

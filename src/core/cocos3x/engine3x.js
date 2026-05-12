@@ -43,6 +43,21 @@ async function pathExists(p) {
   try { await fsp.access(p); return true; } catch { return false; }
 }
 
+/**
+ * Locate a bundle's config file. 3.x builds emit either a plain "config.json"
+ * (editor preview / native template) or a hashed "config.<md5>.json"
+ * (wechatgame and other mini-game flavours). Returns the absolute path or
+ * null if no candidate exists.
+ */
+async function findBundleConfigPath(bundleDir) {
+  const plain = path.join(bundleDir, 'config.json');
+  if (await pathExists(plain)) return plain;
+  let entries;
+  try { entries = await fsp.readdir(bundleDir); } catch { return null; }
+  const hashed = entries.find(f => /^config\.[0-9a-f]+\.json$/i.test(f));
+  return hashed ? path.join(bundleDir, hashed) : null;
+}
+
 async function findBinarySettings(srcDir) {
   if (!(await pathExists(srcDir))) return null;
   let entries;
@@ -206,19 +221,23 @@ async function reverseProject3x(options) {
         continue;
       }
       try {
-        const cfgPath = path.join(bundleDir, 'config.json');
+        const cfgPath = await findBundleConfigPath(bundleDir);
+        if (!cfgPath) {
+          summary.warnings.push(`bundle ${name}: no config.json found`);
+          continue;
+        }
         const raw = JSON.parse(await fsp.readFile(cfgPath, 'utf-8'));
         const cfg = parseBundleConfig(raw, bundleDir);
         bundleRegistry.set(cfg.name, cfg);
-        prepared.push({ bundleDir, cfg, name });
+        prepared.push({ bundleDir, cfg, name, cfgPath });
       } catch (err) {
         logger.error(`Failed to parse config for bundle ${name}:`, err);
         summary.warnings.push(`bundle ${name}: ${err.message}`);
       }
     }
-    for (const { bundleDir, cfg, name } of prepared) {
+    for (const { bundleDir, cfg, name, cfgPath } of prepared) {
       try {
-        const result = await unpackBundle({ bundleDir, cfg, outputPath, verbose, report, bundleRegistry });
+        const result = await unpackBundle({ bundleDir, cfg, cfgPath, outputPath, verbose, report, bundleRegistry });
         summary.bundles.push(result);
       } catch (err) {
         logger.error(`Failed to unpack bundle ${name}:`, err);
@@ -340,8 +359,7 @@ async function discoverBundles(sourcePath) {
       try {
         const st = await stat(bundleDir);
         if (!st.isDirectory()) continue;
-        const cfgPath = path.join(bundleDir, 'config.json');
-        if (await pathExists(cfgPath)) bundles.push(bundleDir);
+        if (await findBundleConfigPath(bundleDir)) bundles.push(bundleDir);
       } catch {
         // ignore
       }
@@ -353,8 +371,9 @@ async function discoverBundles(sourcePath) {
 /**
  * Unpack a single bundle. Returns a summary record.
  */
-async function unpackBundle({ bundleDir, cfg: prebuiltCfg, outputPath, verbose, report, bundleRegistry }) {
-  const cfgPath = path.join(bundleDir, 'config.json');
+async function unpackBundle({ bundleDir, cfg: prebuiltCfg, cfgPath: prebuiltCfgPath, outputPath, verbose, report, bundleRegistry }) {
+  const cfgPath = prebuiltCfgPath || (await findBundleConfigPath(bundleDir));
+  if (!cfgPath) throw new Error(`No config.json found in ${bundleDir}`);
   let cfg = prebuiltCfg;
   if (!cfg) {
     const raw = JSON.parse(await readFile(cfgPath, 'utf-8'));
