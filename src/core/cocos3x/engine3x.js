@@ -120,6 +120,10 @@ async function reverseProject3x(options) {
 
   if (!scriptsOnly) {
     const bundles = await discoverBundles(sourcePath);
+    // Pre-parse every bundle's config so we can build a registry that
+    // unpackAsset can consult to resolve cross-bundle redirects.
+    const bundleRegistry = new Map();
+    const prepared = [];
     for (const bundleDir of bundles) {
       const name = path.basename(bundleDir);
       if (Array.isArray(bundleFilter) && bundleFilter.length > 0
@@ -128,7 +132,19 @@ async function reverseProject3x(options) {
         continue;
       }
       try {
-        const result = await unpackBundle({ bundleDir, outputPath, verbose, report });
+        const cfgPath = path.join(bundleDir, 'config.json');
+        const raw = JSON.parse(await fsp.readFile(cfgPath, 'utf-8'));
+        const cfg = parseBundleConfig(raw, bundleDir);
+        bundleRegistry.set(cfg.name, cfg);
+        prepared.push({ bundleDir, cfg, name });
+      } catch (err) {
+        logger.error(`Failed to parse config for bundle ${name}:`, err);
+        summary.warnings.push(`bundle ${name}: ${err.message}`);
+      }
+    }
+    for (const { bundleDir, cfg, name } of prepared) {
+      try {
+        const result = await unpackBundle({ bundleDir, cfg, outputPath, verbose, report, bundleRegistry });
         summary.bundles.push(result);
       } catch (err) {
         logger.error(`Failed to unpack bundle ${name}:`, err);
@@ -250,10 +266,13 @@ async function discoverBundles(sourcePath) {
 /**
  * Unpack a single bundle. Returns a summary record.
  */
-async function unpackBundle({ bundleDir, outputPath, verbose, report }) {
+async function unpackBundle({ bundleDir, cfg: prebuiltCfg, outputPath, verbose, report, bundleRegistry }) {
   const cfgPath = path.join(bundleDir, 'config.json');
-  const raw = JSON.parse(await readFile(cfgPath, 'utf-8'));
-  const cfg = parseBundleConfig(raw, bundleDir);
+  let cfg = prebuiltCfg;
+  if (!cfg) {
+    const raw = JSON.parse(await readFile(cfgPath, 'utf-8'));
+    cfg = parseBundleConfig(raw, bundleDir);
+  }
 
   logger.info(`Bundle "${cfg.name}": ${cfg.uuids.length} uuids, ${Object.keys(cfg.paths).length} paths`);
 
@@ -293,7 +312,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose, report }) {
     const info = cfg.paths[uuid];
     try {
       const ok = await unpackAsset({
-        cfg, uuid, info, bundleOut, verbose,
+        cfg, uuid, info, bundleOut, verbose, bundleRegistry,
       });
       handled.add(uuid);
       if (ok) result.recovered += 1;
@@ -320,7 +339,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose, report }) {
       || `scene/${uuid}`;
     const info = { path: pathStr, type: 'cc.SceneAsset', subAsset: false };
     try {
-      const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose });
+      const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry });
       handled.add(uuid);
       if (ok) result.recovered += 1;
       else result.missing += 1;
@@ -346,7 +365,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose, report }) {
       subAsset: false,
     };
     try {
-      const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose });
+      const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry });
       handled.add(uuid);
       if (ok) result.recovered += 1;
       if (report) {
@@ -377,7 +396,33 @@ async function unpackBundle({ bundleDir, outputPath, verbose, report }) {
   return result;
 }
 
-async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
+/**
+ * Resolve a missing import file by following `cfg.redirect[uuid]` to a peer
+ * bundle in the registry. Returns null when there is no redirect entry, or
+ * when the named dep bundle isn't present in the registry.
+ *
+ * The returned object lets the caller probe both .json and .cconb on the dep
+ * side, mirroring the local lookup order in `unpackAsset`.
+ *
+ * @param {object} cfg               Current bundle config.
+ * @param {string} uuid              The asset uuid.
+ * @param {Map<string,object>} registry  bundleName -> cfg.
+ * @returns {{depName:string, cfg:object, importJsonPath:string, importCconPath:string}|null}
+ */
+function resolveImportThroughRedirect(cfg, uuid, registry) {
+  const depName = cfg && cfg.redirect && cfg.redirect[uuid];
+  if (!depName) return null;
+  const depCfg = registry instanceof Map ? registry.get(depName) : null;
+  if (!depCfg) return null;
+  return {
+    depName,
+    cfg: depCfg,
+    importJsonPath: getImportPath(depCfg, uuid, '.json'),
+    importCconPath: getImportPath(depCfg, uuid, '.cconb'),
+  };
+}
+
+async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry }) {
   const importSrc = getImportPath(cfg, uuid, '.json');
   const importSrcCcon = getImportPath(cfg, uuid, '.cconb');
   const nativeExt = cfg.extensionMap[uuid] || null;
@@ -446,6 +491,41 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
         await writeFile(outBase + importExt, JSON.stringify(content, null, 2));
       }
       importRecovered = true;
+    }
+  } else {
+    // Cross-bundle redirect: when neither importSrc nor importSrcCcon exists
+    // locally but cfg.redirect points to another bundle, read the import from
+    // the dep bundle. The output stays under the requesting bundle's tree.
+    const redirectInfo = resolveImportThroughRedirect(cfg, uuid, bundleRegistry);
+    if (redirectInfo) {
+      let candidate = null;
+      let candidateIsCcon = false;
+      if (await pathExists(redirectInfo.importJsonPath)) {
+        candidate = redirectInfo.importJsonPath;
+      } else if (await pathExists(redirectInfo.importCconPath)) {
+        candidate = redirectInfo.importCconPath;
+        candidateIsCcon = true;
+      }
+      if (candidate) {
+        const buf = await readFile(candidate);
+        if (candidateIsCcon || isCcon(buf)) {
+          importDoc = await decodeCconToDoc(buf, outBase);
+          importFromCcon = true;
+        } else {
+          try { importDoc = JSON.parse(buf.toString('utf-8')); } catch { importDoc = null; }
+        }
+        if (importDoc !== null) {
+          if (!skipImportWrite) {
+            const disabled = process.env.CC_REVERSE_NO_REHYDRATE === '1';
+            const content = disabled
+              ? importDoc
+              : (tryRehydrate(importDoc) || importDoc);
+            await writeFile(outBase + importExt, JSON.stringify(content, null, 2));
+          }
+          importRecovered = true;
+          logger.debug(`redirect: [${cfg.name}] ${uuid} <- ${redirectInfo.depName}`);
+        }
+      }
     }
   }
 
@@ -887,4 +967,4 @@ async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
   await writeFile(path.join(outputPath, 'RECOVERY_REPORT.md'), lines.join('\n'));
 }
 
-module.exports = { reverseProject3x, discoverBundles };
+module.exports = { reverseProject3x, discoverBundles, resolveImportThroughRedirect };
