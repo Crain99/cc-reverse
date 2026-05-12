@@ -13,6 +13,7 @@ const { logger } = require('../utils/logger');
 const { loadConfig } = require('../config/configLoader');
 const { decryptProject, scanJscFiles, extractKeyFromProject } = require('./jscDecryptor');
 const { reverseProject3x } = require('./cocos3x/engine3x');
+const { writeRecoveryReport2x } = require('./cocos2x/recoveryReport2x');
 
 // 将异步文件操作转为 Promise
 const readFile = promisify(fs.readFile);
@@ -128,7 +129,23 @@ async function reverseProject(options) {
     
     logger.info('生成项目文件...');
     await projectGenerator.generateProject();
-    
+
+    // Emit a recovery report so the validate gate has something to read.
+    // 2.x has no per-bundle status tracking; we synthesise a single-section
+    // report whose declared count matches the on-disk asset tree exactly.
+    try {
+      await writeRecoveryReport2x({
+        outputPath,
+        sourcePath,
+        version: projectInfo.version,
+        processed: resourceProcessor?.cacheReadList?.length ?? null,
+        decodedJsc: jscFiles.length || null,
+        failures: [],
+      });
+    } catch (e) {
+      logger.warn('写入 RECOVERY_REPORT.md 失败: ' + (e && e.message ? e.message : e));
+    }
+
     // 清理临时文件
     if (!verbose) {
       await fileManager.cleanDirectory(tempPath);

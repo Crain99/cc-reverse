@@ -1143,12 +1143,14 @@ async function writeProjectDescriptor(outputPath, settings, sourceProjectName) {
   });
 }
 
-function countAssetFilesSync(root) {
+async function countAssetFiles(root) {
   let n = 0;
-  if (!fs.existsSync(root)) return 0;
-  for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+  if (!(await pathExists(root))) return 0;
+  let entries;
+  try { entries = await readdir(root, { withFileTypes: true }); } catch { return 0; }
+  for (const e of entries) {
     const f = path.join(root, e.name);
-    if (e.isDirectory()) n += countAssetFilesSync(f);
+    if (e.isDirectory()) n += await countAssetFiles(f);
     else if (!e.name.endsWith('.meta')) n++;
   }
   return n;
@@ -1199,7 +1201,7 @@ async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
     }
     return n;
   })();
-  const actual = countAssetFilesSync(path.join(outputPath, 'assets'));
+  const actual = await countAssetFiles(path.join(outputPath, 'assets'));
   const extras = actual - declaredSoFar;
   if (extras > 0) {
     lines.push('');
