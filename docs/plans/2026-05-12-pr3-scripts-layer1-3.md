@@ -2,7 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**目标:** 把 3.x `src/chunks/*.js`（System.register bundles）切分为每个注册类一份 ESM 模块，并将 `__extends`/`__decorate` 折回到原生 `class` + 装饰器语法。这是 7 层脚本恢复管线中的 Layer 1-3（Layer 4-6 在 PR 4，Layer 7 humanify 在 PR 5）。
+**目标:** 把 3.x `src/chunks/*.js`（System.register bundles）切分为每个注册类一份 ESM 模块，并将 `__extends`/`__decorate` 折回到原生 `class` + 装饰器语法。这是脚本恢复管线（**6 个 in-memory AST layer + 1 个独立 humanify CLI 子命令**；只有 Layer 6 落盘到 `<out>/assets/scripts/`，humanify 是用户显式跑 `cc-reverse humanify <outDir>` 的带外步骤）中的 Layer 1-3（Layer 4-6 在 PR 4，opt-in humanify CLI 在 PR 5）。
+
+> 注：参考 cocos-reverse-engineering-skill `references/output-layers.md` 已正确描述该管线分层。
 
 **架构:**
 - `src/core/cocos3x/scriptRecovery/` 下新模块树，每层一个文件（`chunkSplitter`、`esmRebuilder`、`classRestorer`），以及驱动它们的 `pipeline.js`。
@@ -1077,7 +1079,7 @@ In addition to the legacy raw chunk copy under `assets/Scripts/`, the unpacker n
 2. **Layer 2** restores ESM `import` / `export` syntax from the SystemJS setters and `_export` calls.
 3. **Layer 3** uses webcrack to undo TypeScript's ES5 `__extends` helper, then folds `__decorate([...], Class)` assignments into native decorator syntax.
 
-Future PRs add Layer 4 (ccclass naming + UUID mapping), Layer 5 (typed-field inference from scenes), Layer 6 (TS project emission with tsconfig), and Layer 7 (optional humanify pass for minified identifiers).
+Future PRs add Layer 4 (ccclass naming + UUID mapping), Layer 5 (typed-field inference from scenes), and Layer 6 (TS project emission with tsconfig — the only layer that writes to disk, under `<out>/assets/scripts/`). An opt-in `cc-reverse humanify <outDir>` CLI subcommand (out-of-band, not part of the in-memory layer pipeline) ships in PR 5 for minified-identifier renaming.
 ```
 
 **Step 3: 再跑一次测试**
@@ -1101,7 +1103,7 @@ gh pr create --base main --head feature/pr3-scripts-layer1-3 --repo clawnet-ai/c
   --body "$(cat <<'EOF'
 ## Summary
 
-PR 3 of the 3.x overhaul — implements the first three layers of the 7-layer script recovery pipeline:
+PR 3 of the 3.x overhaul — implements the first three of the six in-memory AST layers in the script recovery pipeline (only the final layer writes to disk; an opt-in humanify CLI subcommand ships separately in PR 5):
 
 - **Layer 1 chunkSplitter** — parses `src/chunks/*.js` System.register calls into per-module ASTs with dep + setter binding metadata.
 - **Layer 2 esmRebuilder** — rewrites SystemJS setters / `_export` into native `import` / `export` statements.
@@ -1128,8 +1130,8 @@ src/chunks/*.js
 
 - Layer 4 (ccclass naming + UUID mapping) — PR 4
 - Layer 5 (typed-field inference from scene/prefab) — PR 4
-- Layer 6 (TS project emission with tsconfig) — PR 5
-- Layer 7 (humanify, optional) — PR 5
+- Layer 6 (TS project emission with tsconfig — the only on-disk artifact, written to `<out>/assets/scripts/`) — PR 5
+- `cc-reverse humanify <outDir>` opt-in CLI subcommand (out-of-band, not part of the layer pipeline) — PR 5
 EOF
 )"
 ```

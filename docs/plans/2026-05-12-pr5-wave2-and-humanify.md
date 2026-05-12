@@ -1,10 +1,12 @@
-# PR 5 — Wave 2(R9–R12)+ Layer 7 humanify + 遗留修复
+# PR 5 — Wave 2(R9–R12)+ humanify opt-in CLI 子命令 + 遗留修复
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**目标：** 把 3.x 的输出提升到"诚实的工程元数据"水准(从源 `settings.json` 动态生成 `project.json`、更智能的 class→dir 映射、更完整的 `.meta` 文件、3.x 弃用硬编码类型表);新增可选的 Layer 7 humanify 包装(`cc-reverse humanify <dir>`);偿还 PR 3/4 评审中遗留的测试/UX 缺口。
+**目标：** 把 3.x 的输出提升到"诚实的工程元数据"水准(从源 `settings.json` 动态生成 `project.json`、更智能的 class→dir 映射、更完整的 `.meta` 文件、3.x 弃用硬编码类型表);新增**可选的 `cc-reverse humanify <outDir>` CLI 子命令**(opt-in 带外步骤,**不**属于 6 层 in-memory 脚本恢复管线,需要用户显式调用);偿还 PR 3/4 评审中遗留的测试/UX 缺口。
 
-**架构:** 所有 Wave 2 改动落在 `src/core/cocos3x/projectScaffold.js` + `engine3x.js`。新增 `src/core/cocos3x/scriptRecovery/humanify.js`(Layer 7,可选,在 `humanify` CLI 可用时 shell out,不作为硬依赖)。遗留修复是对现有文件的小手术。2.x 代码路径完全不动。
+> 注：脚本恢复管线由 6 个 in-memory AST layer 组成(只有 Layer 6 落盘),humanify 是 reverse 主流程之外的独立 CLI 子命令。参考 cocos-reverse-engineering-skill `references/output-layers.md` 已正确描述。
+
+**架构:** 所有 Wave 2 改动落在 `src/core/cocos3x/projectScaffold.js` + `engine3x.js`。新增 `src/core/cocos3x/scriptRecovery/humanify.js`(humanify CLI 包装器,opt-in,在 `humanify` CLI 可用时 shell out,不作为硬依赖,**不**自动接入 reverse 主管线)。遗留修复是对现有文件的小手术。2.x 代码路径完全不动。
 
 **技术栈:** Node ESM;现有的 babel/ts-morph/prettier;`child_process.spawn` 用于 humanify;vitest。
 
@@ -494,9 +496,9 @@ git commit -m "feat(3x): R11 path resolver + R12 richer asset .meta files"
 
 ---
 
-## Task 4:Layer 7 humanify 包装
+## Task 4:humanify opt-in CLI 子命令(带外,不属于 6 层 in-memory 管线)
 
-**目标:** 提供可选的 `cc-reverse humanify <dir>` 命令,在已恢复的 TS 工程上调用用户已安装的 `humanify` CLI。无硬依赖。两种 provider:`local`(默认)与 `openai`(可经 `OPENAI_BASE_URL` 与 `OPENAI_API_KEY` 配置)。检测到缺少 CLI 时退出码 1 并附安装说明;**不**自动安装。
+**目标:** 提供可选的 `cc-reverse humanify <dir>` 命令,在已恢复的 TS 工程上调用用户已安装的 `humanify` CLI。**这是带外步骤,需要用户显式调用,不会被 `cc-reverse reverse` 主管线自动触发。** 无硬依赖。两种 provider:`local`(默认)与 `openai`(可经 `OPENAI_BASE_URL` 与 `OPENAI_API_KEY` 配置)。检测到缺少 CLI 时退出码 1 并附安装说明;**不**自动安装。
 
 **文件：**
 - 创建:`src/core/cocos3x/scriptRecovery/humanify.js`
@@ -549,7 +551,10 @@ describe('humanify wrapper', () => {
 
 ```javascript
 /*
- * Layer 7 — humanify wrapper.
+ * humanify CLI wrapper (out-of-band, opt-in).
+ *
+ * NOT part of the 6-layer in-memory script recovery pipeline.
+ * Triggered only by the explicit `cc-reverse humanify <outDir>` subcommand.
  *
  * Opt-in. Shells out to the user-installed `humanify` CLI
  * (https://github.com/jehna/humanify). Never installed automatically.
@@ -621,7 +626,7 @@ module.exports = { runHumanify, buildHumanifyArgs };
 ```javascript
 program
   .command('humanify <outDir>')
-  .description('[opt-in, Layer 7] rename minified identifiers via the user-installed humanify CLI')
+  .description('[opt-in, out-of-band — not part of the 6-layer pipeline] rename minified identifiers via the user-installed humanify CLI')
   .option('--provider <name>', 'local | openai', 'local')
   .option('--base-url <url>', 'OpenAI-compatible base URL', process.env.OPENAI_BASE_URL)
   .option('--api-key <key>', 'OpenAI-compatible API key', process.env.OPENAI_API_KEY)
@@ -652,7 +657,7 @@ program
 ```bash
 git add src/core/cocos3x/scriptRecovery/humanify.js test/unit/scriptRecovery.humanify.test.js
 git add -u src/index.js
-git commit -m "feat(3x scripts): Layer 7 humanify wrapper (opt-in CLI subcommand)"
+git commit -m "feat(3x scripts): humanify wrapper (opt-in CLI subcommand, out-of-band)"
 ```
 
 ---
@@ -863,13 +868,13 @@ git commit -m "test(3x scripts): close PR4 review coverage gaps (Layer 4 refs, L
 - R10 — 显式边界:3.x rehydration 使用每份文档的 `sharedClasses`;2.x `typeDefinitions` 表已不在 3.x 依赖图中(由测试钉死)。
 - R11 — 源 path 缺失时 `resolveOutputPath` 回退到 `<classDir>/<uuid>`。
 - R12 — 非脚本资源也得到 `.meta`(importer 按类映射)。
-- Layer 7 — 可选的 `cc-reverse humanify <outDir>` CLI(对 humanify CLI 无硬依赖;支持 local + openai provider;copilot-api 仅作为用户自担风险记入文档)。
+- humanify CLI 子命令 — 可选的 `cc-reverse humanify <outDir>` 带外步骤(对 humanify CLI 无硬依赖;支持 local + openai provider;copilot-api 仅作为用户自担风险记入文档;**不**属于 6 层 in-memory 脚本恢复管线,需用户显式调用)。
 - 遗留修复 — gate detail 字符串;ccclassNamer + typeInferer 测试缺口已补。
 - 105 个测试通过。
 
 **Step 2:README**
 
-在脚本恢复文档下新增 `### Layer 7 — humanify (opt-in)` 子节:
+在脚本恢复文档下新增 `### humanify (opt-in, out-of-band)` 子节,**强调它不是 reverse 主管线的一部分,而是用户在 reverse 完成后显式调用的独立 CLI 子命令**:
 
 - 安装方法 (`npm i -g humanify`)。
 - 两种支持的 provider(local 默认;openai 通过 `OPENAI_BASE_URL` / `OPENAI_API_KEY`)。
@@ -889,11 +894,11 @@ git push origin feature/pr5-wave2-and-humanify
 
 ```bash
 gh pr create --base main --head feature/pr5-wave2-and-humanify \
-  --title "feat(3.x): Wave 2 (R9–R12) + Layer 7 humanify + PR3/4 carry-over fixes" \
+  --title "feat(3.x): Wave 2 (R9–R12) + humanify opt-in CLI subcommand + PR3/4 carry-over fixes" \
   --body "$(cat <<'EOF'
 ## Summary
 
-Wave 2 of the 3.x overhaul plus the opt-in Layer 7 humanify wrapper, plus carry-over fixes from PR 3/4 reviews.
+Wave 2 of the 3.x overhaul plus the opt-in `cc-reverse humanify` CLI subcommand (out-of-band — NOT part of the 6-layer in-memory script recovery pipeline; user must invoke explicitly), plus carry-over fixes from PR 3/4 reviews.
 
 Plan: docs/plans/2026-05-12-pr5-wave2-and-humanify.md
 
@@ -903,8 +908,9 @@ Plan: docs/plans/2026-05-12-pr5-wave2-and-humanify.md
 - **R11** — `resolveOutputPath` helper: when `config.paths[uuid].path` is missing, derive `<classDir>/<uuid>` from `CLASS_DIR`.
 - **R12** — `.meta` files for non-script assets, importer keyed by Cocos class (`cc.SpriteFrame` → `sprite-frame`, etc.).
 
-### Layer 7 — humanify (opt-in)
+### humanify (opt-in, out-of-band)
 - New CLI subcommand: `cc-reverse humanify <outDir> [--provider local|openai] [--base-url ...] [--api-key ...] [--model ...]`.
+- **Not** triggered by the `reverse` main pipeline — user must invoke explicitly after recovery completes. Not one of the 6 in-memory AST layers.
 - humanify is **not** a hard dep — wrapper detects missing binary and exits with install instructions.
 - copilot-api documented as user-borne risk only; never wired programmatically.
 
