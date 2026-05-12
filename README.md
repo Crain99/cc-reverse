@@ -46,7 +46,10 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - 文件结构：`application.js` + `src/settings.json` + `assets/<bundle>/config.json` + `src/chunks/*.js` + `cocos-js/`
 - 按 bundle 独立解析 `config.json`（`paths` + `uuids` + `types` + `versions` + `extensionMap`）
 - 资源按原始项目路径（`assets/main/scenes/Main.scene` 等）还原，并生成匹配的 `.meta`
-- 支持 **CCON v1**（JSON 内嵌 + 8 字节对齐 chunks）；v2（notepack）保留原始数据留给后续处理
+- 支持 **CCON v1**（JSON 内嵌 + 8 字节对齐 chunks）与 **CCON v2**（notepack/msgpack 子集解码，无外部依赖）
+- **完整 IPackedFileData 反序列化**：多段 pack 自动按共享头切片并逐段 rehydrate
+- **TypedArray 字段还原**：DataTypeID 13/14 输出 `{ __type__: 'Float32Array', __data__: '<base64>' }` 标记，覆盖 9 种 TypedArray 构造器
+- **跨 bundle redirect 解析**：本地缺失的 import 文件会通过 `cfg.redirect` 自动从依赖 bundle 中读取
 - 加密：仅 bundle 级 `index.jsc`，可通过 `--key` 传入或从 `application.js` / `src/settings.json` 自动抽取
 - 使用 `--version-hint 3.x` 强制指定版本；`--bundle <name>` 只处理指定 bundle（可重复）
 
@@ -290,5 +293,7 @@ npm run validate path/to/output-dir
 
 This runs the gate suite defined under `src/validate/gates/`. Currently includes:
 - `recoveryReport`: cross-checks `RECOVERY_REPORT.md` counts against the file count under `assets/`.
+- `cconV2`: fails if any `*.ccon-v2.rawjson` sentinel files remain (i.e. undecoded CCON v2).
+- `typedArrays`: informational pass; verifies the TypedArray rehydrate path was exercised.
 
 The unpack also emits `RECOVERY_REPORT.md` listing per-bundle ok/failed/missed counts and a list of failed assets with reasons.
