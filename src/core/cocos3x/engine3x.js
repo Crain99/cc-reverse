@@ -652,13 +652,21 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
     const primaryExt = isPureNativeClass(className) ? '' : inferImportExt(className);
     const primaryFile = outBase + primaryExt;
     let extras;
-    if (className === 'sp.SkeletonData' && importRecovered) {
+    if (importRecovered) {
       try {
         const doc = JSON.parse(await fsp.readFile(outBase + importExt, 'utf-8'));
-        const textures = Array.isArray(doc.textures)
-          ? doc.textures.map(t => t && t.__uuid__).filter(Boolean) : [];
-        extras = { textures };
-        if (doc.atlasText) extras.atlasInline = true;
+        if (className === 'sp.SkeletonData') {
+          const textures = Array.isArray(doc.textures)
+            ? doc.textures.map(t => t && t.__uuid__).filter(Boolean) : [];
+          extras = { textures };
+          if (doc.atlasText) extras.atlasInline = true;
+        } else if (className === 'dragonBones.DragonBonesAsset') {
+          const atlasUuid = doc.dragonBonesAtlas && doc.dragonBonesAtlas.__uuid__;
+          if (atlasUuid) extras = { atlasUuid };
+        } else if (className === 'dragonBones.DragonBonesAtlasAsset') {
+          const textureUuid = doc.texture && doc.texture.__uuid__;
+          if (textureUuid) extras = { textureUuid };
+        }
       } catch { /* best-effort */ }
     }
     try {
