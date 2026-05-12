@@ -55,46 +55,46 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - 加密：仅 bundle 级 `index.jsc`，可通过 `--key` 传入或从 `application.js` / `src/settings.json` 自动抽取
 - 使用 `--version-hint 3.x` 强制指定版本；`--bundle <name>` 只处理指定 bundle（可重复）
 
-### Script recovery (3.x)
+### 脚本恢复（3.x）
 
-The unpacker drives a 6-layer script recovery pipeline. Output is emitted in two coexisting layouts (PR 5 will retire the legacy one):
+unpacker 驱动一条 6 层脚本恢复流水线。输出以两种布局并存（PR 5 将废弃旧布局）：
 
-- **Legacy** (`--script-layers <= 0` or always for backward compat): raw chunk copy under `assets/Scripts/`.
-- **Layered** (`--script-layers <n>`, default `6`): per-module files under `assets/scripts/<bundle>/<module>.{js|ts}`.
+- **Legacy**（`--script-layers <= 0` 或为向后兼容始终输出）：原始 chunk 复制到 `assets/Scripts/` 下。
+- **Layered**（`--script-layers <n>`，默认 `6`）：按模块输出到 `assets/scripts/<bundle>/<module>.{js|ts}`。
 
-Layers:
+各层说明：
 
-1. **Layer 1 (chunkSplitter)** splits each `System.register(...)` into one module per registered class.
-2. **Layer 2 (esmRebuilder)** restores ESM `import` / `export` syntax from the SystemJS setters and `_export` calls.
-3. **Layer 3 (classRestorer)** uses webcrack to undo TypeScript's ES5 `__extends` helper, then folds `__decorate([...], Class)` assignments into native decorator syntax.
-4. **Layer 4 (ccclassNamer)** scans `_RF.push(module, uuid, name)` calls and `@ccclass('Name')` decorators to recover the original class name + per-module UUID map.
-5. **Layer 5 (typeInferer)** scans recovered scenes / prefabs (`assets/<bundle>/**/*.scene|*.prefab`) and infers field types from `__type__` references.
-6. **Layer 6 (tsProjectEmitter)** emits `.ts` files via `ts-morph` (formatted with `prettier`), writes a top-level `tsconfig.json`, and emits `RECOVERY_INDEX.json` mapping ccclass -> { uuid, file }.
+1. **Layer 1 (chunkSplitter)** 将每个 `System.register(...)` 拆分为每个注册类一个模块。
+2. **Layer 2 (esmRebuilder)** 根据 SystemJS 的 setters 和 `_export` 调用还原 ESM 的 `import` / `export` 语法。
+3. **Layer 3 (classRestorer)** 使用 webcrack 还原 TypeScript 的 ES5 `__extends` 辅助函数，然后将 `__decorate([...], Class)` 赋值折叠为原生 decorator 语法。
+4. **Layer 4 (ccclassNamer)** 扫描 `_RF.push(module, uuid, name)` 调用和 `@ccclass('Name')` decorator，还原原始类名 + 每个模块的 UUID 映射表。
+5. **Layer 5 (typeInferer)** 扫描已恢复的场景 / 预制体（`assets/<bundle>/**/*.scene|*.prefab`），从 `__type__` 引用推断字段类型。
+6. **Layer 6 (tsProjectEmitter)** 通过 `ts-morph` 输出 `.ts` 文件（用 `prettier` 格式化），生成顶层 `tsconfig.json`，并输出 `RECOVERY_INDEX.json` 记录 ccclass -> { uuid, file } 的映射。
 
-After install, run `npm install` to pull the new deps (`ts-morph`, `prettier`). Use `--script-layers 3` to stop at the JS-with-decorators stage if you don't want the TS project.
+安装后请运行 `npm install` 拉取新增依赖（`ts-morph`、`prettier`）。如果不需要 TS 工程，可使用 `--script-layers 3` 停在 JS-with-decorators 阶段。
 
-### Layer 7 — humanify (opt-in)
+### Layer 7 — humanify（可选）
 
-After running the 6-layer recovery, you can optionally run **Layer 7** to rename minified identifiers (e.g., `t`, `e`, `n`) into human-readable names by shelling out to the [`humanify`](https://github.com/jehna/humanify) CLI. This is **opt-in** and **not a hard dep** — install it yourself first:
+完成 6 层恢复后，可以选择运行 **Layer 7**，通过调用 [`humanify`](https://github.com/jehna/humanify) CLI 将压缩后的标识符（如 `t`、`e`、`n`）重命名为可读名称。该层为 **可选** 且 **不是硬依赖**，请自行先安装：
 
 ```bash
 npm install -g humanify
 ```
 
-Then point the wrapper at a recovered output directory:
+然后将 wrapper 指向已恢复的输出目录：
 
 ```bash
 cc-reverse humanify <outDir> [--provider local|openai] [--base-url <url>] [--api-key <key>] [--model <name>]
 ```
 
-- **Output:** `<outDir>/humanified/`
-- **Providers:**
-  - `local` (default) — offline LLM via `humanify`'s built-in model download. No keys required.
-  - `openai` — any OpenAI-compatible endpoint. Reads `OPENAI_BASE_URL` / `OPENAI_API_KEY` from env (override with `--base-url` / `--api-key` / `--model`).
+- **输出：** `<outDir>/humanified/`
+- **Providers：**
+  - `local`（默认）— 通过 `humanify` 内置的模型下载使用离线 LLM，无需密钥。
+  - `openai` — 任意兼容 OpenAI 协议的端点。从环境变量读取 `OPENAI_BASE_URL` / `OPENAI_API_KEY`（可用 `--base-url` / `--api-key` / `--model` 覆盖）。
 
-If the `humanify` binary is not on `PATH`, the wrapper exits with `1` and prints the install hint — it never auto-installs.
+如果 `humanify` 二进制不在 `PATH` 中，wrapper 会以退出码 `1` 退出并打印安装提示，不会自动安装。
 
-> ⚠️ **`copilot-api` is a user-borne risk path.** Some users route humanify through a `copilot-api` shim to use a paid GitHub Copilot subscription as the LLM. This is **not** wired by `cc-reverse` and is not officially supported — using it may violate GitHub's ToS, and any consequences are entirely the user's responsibility. Stick to `local` or your own `openai`-compatible endpoint.
+> ⚠️ **`copilot-api` 属于用户自担风险的路径。** 部分用户通过 `copilot-api` shim 将 humanify 接入付费的 GitHub Copilot 订阅作为 LLM。`cc-reverse` **未** 集成该路径，也不提供官方支持 —— 使用它可能违反 GitHub 的服务条款，相关后果完全由用户自行承担。请使用 `local` 或你自己的 `openai` 兼容端点。
 
 ## 安装
 
@@ -327,17 +327,17 @@ MIT
 
 欢迎提交问题报告和改进建议！
 
-## Validation
+## 校验
 
-After running a 3.x reverse, you can verify the output integrity:
+完成 3.x 反向后，可以校验输出完整性：
 
 ```bash
 npm run validate path/to/output-dir
 ```
 
-This runs the gate suite defined under `src/validate/gates/`. Currently includes:
-- `recoveryReport`: cross-checks `RECOVERY_REPORT.md` counts against the file count under `assets/`.
-- `cconV2`: fails if any `*.ccon-v2.rawjson` sentinel files remain (i.e. undecoded CCON v2).
-- `typedArrays`: informational pass; verifies the TypedArray rehydrate path was exercised.
+该命令会运行 `src/validate/gates/` 下定义的 gate 套件。当前包含：
+- `recoveryReport`：交叉校验 `RECOVERY_REPORT.md` 中的计数与 `assets/` 下的文件数量是否一致。
+- `cconV2`：如果残留任何 `*.ccon-v2.rawjson` 占位文件（即仍存在未解码的 CCON v2），则失败。
+- `typedArrays`：信息性通过；用于验证 TypedArray rehydrate 路径是否被触发。
 
-The unpack also emits `RECOVERY_REPORT.md` listing per-bundle ok/failed/missed counts and a list of failed assets with reasons.
+unpack 还会输出 `RECOVERY_REPORT.md`，列出每个 bundle 的 ok / failed / missed 计数，以及失败资源清单和原因。
