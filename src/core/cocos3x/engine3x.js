@@ -28,6 +28,9 @@ const { inspect } = require('./deserializer');
 const { rehydrateIFileData, rehydrateIPackedFileData } = require('./rehydrate');
 const { writeCocos2xProject } = require('./projectScaffold');
 const { RecoveryReport } = require('./recoveryReport');
+const { runScriptRecoveryPipeline } = require('./scriptRecovery');
+const generatorModule = require('@babel/generator');
+const generate = generatorModule.default || generatorModule;
 
 const readFile = promisify(fs.readFile);
 const writeFile = promisify(fs.writeFile);
@@ -891,7 +894,58 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
     }
   }
 
+  try {
+    const layered = await recoverScriptsLayered(sourcePath, outputPath, verbose);
+    if (verbose && layered.modulesEmitted) {
+      logger.debug(`LayeredScripts: ${layered.modulesEmitted} modules emitted, ${layered.errors.length} errors`);
+    }
+  } catch (err) {
+    logger.warn(`Layered script recovery skipped: ${err.message}`);
+  }
+
   return { total };
+}
+
+/**
+ * Layered script recovery (Layers 1-3): writes one .js per System.register module
+ * under <outputPath>/assets/scripts/<chunkBaseName>/. Returns {modulesEmitted, errors}.
+ *
+ * Silently skipped when no chunks file is found — keeps non-3.x projects unaffected.
+ */
+async function recoverScriptsLayered(sourcePath, outputPath, verbose) {
+  const chunksDir = path.join(sourcePath, 'src', 'chunks');
+  if (!(await pathExists(chunksDir))) return { modulesEmitted: 0, errors: [] };
+  const entries = await readdir(chunksDir);
+  const chunks = [];
+  for (const entry of entries) {
+    if (!entry.endsWith('.js')) continue;
+    const full = path.join(chunksDir, entry);
+    const source = await readFile(full, 'utf8');
+    chunks.push({ name: entry, source });
+  }
+  if (chunks.length === 0) return { modulesEmitted: 0, errors: [] };
+
+  let totalEmitted = 0;
+  const allErrors = [];
+  for (const chunk of chunks) {
+    const { modules, errors } = await runScriptRecoveryPipeline({ chunks: [chunk] });
+    allErrors.push(...errors);
+    const baseName = chunk.name.replace(/\.js$/, '');
+    const outDir = path.join(outputPath, 'assets', 'scripts', baseName);
+    for (const m of modules) {
+      if (!m.ast) continue;
+      try {
+        const code = generate(m.ast, { compact: false }).code;
+        await mkdir(outDir, { recursive: true });
+        await writeFile(path.join(outDir, `${m.name}.js`), code);
+        if (verbose) logger.debug(`LayeredScript: ${baseName}/${m.name}.js`);
+        totalEmitted += 1;
+      } catch (err) {
+        allErrors.push({ layer: 'emit', module: m.name, message: err.message });
+      }
+    }
+  }
+  return { modulesEmitted: totalEmitted, errors: allErrors };
 }
 
 async function* walkJsFiles(root) {
@@ -967,4 +1021,4 @@ async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
   await writeFile(path.join(outputPath, 'RECOVERY_REPORT.md'), lines.join('\n'));
 }
 
-module.exports = { reverseProject3x, discoverBundles, resolveImportThroughRedirect };
+module.exports = { reverseProject3x, discoverBundles, resolveImportThroughRedirect, recoverScriptsLayered };
