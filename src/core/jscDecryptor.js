@@ -2,36 +2,23 @@
  * @Date: 2026-04-03
  * @Description: JSC 文件 XXTEA 解密模块
  */
-const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const xxtea = require('xxtea-node');
 const pako = require('pako');
 const { logger } = require('../utils/logger');
 
+async function pathExists(p) {
+  try { await fsp.access(p); return true; } catch { return false; }
+}
+
 /**
- * 递归扫描目录中的所有 .jsc 文件 (sync, legacy)
+ * 递归扫描目录中的所有 .jsc 文件 (async)
  * @param {string} dirPath 目录路径
- * @returns {string[]} .jsc 文件路径列表
+ * @returns {Promise<string[]>} .jsc 文件路径列表
  */
-function scanJscFiles(dirPath) {
-  const results = [];
-
-  function walk(dir) {
-    const entries = fs.readdirSync(dir);
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry);
-      const stat = fs.statSync(fullPath);
-      if (stat.isDirectory()) {
-        walk(fullPath);
-      } else if (path.extname(fullPath) === '.jsc') {
-        results.push(fullPath);
-      }
-    }
-  }
-
-  walk(dirPath);
-  return results;
+async function scanJscFiles(dirPath) {
+  return scanJscFilesAsync(dirPath);
 }
 
 /**
@@ -185,13 +172,13 @@ async function decryptProject(sourcePath, outputDir, key) {
     const relativePath = path.relative(sourcePath, jscFile);
     const outputFile = path.join(outputDir, relativePath.replace(/\.jsc$/, '.js'));
 
-    fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+    await fsp.mkdir(path.dirname(outputFile), { recursive: true });
 
-    const data = fs.readFileSync(jscFile);
+    const data = await fsp.readFile(jscFile);
     const result = decryptJscBuffer(data, key);
 
     if (result) {
-      fs.writeFileSync(outputFile, result);
+      await fsp.writeFile(outputFile, result);
       decrypted++;
     } else {
       logger.warn(`解密失败: ${relativePath}`);

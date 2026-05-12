@@ -17,6 +17,7 @@
  *   5. Emit a minimal project.json so Cocos Creator 3.x recognises the output.
  */
 const fs = require('fs');
+const fsp = require('fs/promises');
 const path = require('path');
 const { promisify } = require('util');
 const { logger } = require('../../utils/logger');
@@ -33,6 +34,10 @@ const mkdir = promisify(fs.mkdir);
 const copyFile = promisify(fs.copyFile);
 const readdir = promisify(fs.readdir);
 const stat = promisify(fs.stat);
+
+async function pathExists(p) {
+  try { await fsp.access(p); return true; } catch { return false; }
+}
 
 /**
  * Native extensions we know how to detect from a JSON document's `_native`
@@ -134,7 +139,7 @@ async function reverseProject3x(options) {
     summary.scripts = await recoverScripts(sourcePath, outputPath, verbose);
   }
 
-  const projectFlavor = detectProjectFlavor(sourcePath);
+  const projectFlavor = await detectProjectFlavor(sourcePath);
   summary.flavor = projectFlavor.flavor;
 
   if (projectFlavor.flavor === '2.4.x-bundle') {
@@ -157,12 +162,12 @@ async function reverseProject3x(options) {
  * build (scenes use `.fire`, settings is `window._CCSettings`) or a true 3.x
  * build (`.scene`, `src/settings.json`).
  */
-function detectProjectFlavor(sourcePath) {
+async function detectProjectFlavor(sourcePath) {
   // 3.x marker.
   const settings3xPath = path.join(sourcePath, 'src', 'settings.json');
-  if (fs.existsSync(settings3xPath)) {
+  if (await pathExists(settings3xPath)) {
     try {
-      const s = JSON.parse(fs.readFileSync(settings3xPath, 'utf-8'));
+      const s = JSON.parse(await fsp.readFile(settings3xPath, 'utf-8'));
       return { flavor: '3.x', settings: s };
     } catch {
       // fall through
@@ -170,12 +175,12 @@ function detectProjectFlavor(sourcePath) {
   }
   // Also check for hashed settings.*.json (3.x web builds).
   const srcDir = path.join(sourcePath, 'src');
-  if (fs.existsSync(srcDir)) {
-    const files = fs.readdirSync(srcDir);
+  if (await pathExists(srcDir)) {
+    const files = await fsp.readdir(srcDir);
     const hashed = files.find(f => /^settings\..+\.json$/.test(f));
     if (hashed) {
       try {
-        const s = JSON.parse(fs.readFileSync(path.join(srcDir, hashed), 'utf-8'));
+        const s = JSON.parse(await fsp.readFile(path.join(srcDir, hashed), 'utf-8'));
         return { flavor: '3.x', settings: s };
       } catch {
         // fall through
@@ -185,9 +190,9 @@ function detectProjectFlavor(sourcePath) {
 
   // 2.4.x marker: src/settings.js containing `window._CCSettings = { ... }`.
   const settings2xPath = path.join(sourcePath, 'src', 'settings.js');
-  if (fs.existsSync(settings2xPath)) {
+  if (await pathExists(settings2xPath)) {
     try {
-      const text = fs.readFileSync(settings2xPath, 'utf-8');
+      const text = await fsp.readFile(settings2xPath, 'utf-8');
       if (text.includes('_CCSettings') || text.includes('CCSettings')) {
         const settings = parseCCSettingsScript(text);
         return { flavor: '2.4.x-bundle', settings, version: settings.CCSettings?.engineVersion };
@@ -223,7 +228,7 @@ async function discoverBundles(sourcePath) {
     path.join(sourcePath, 'subpackages'),
   ];
   for (const root of candidates) {
-    if (!fs.existsSync(root)) continue;
+    if (!(await pathExists(root))) continue;
     const entries = await readdir(root);
     for (const entry of entries) {
       const bundleDir = path.join(root, entry);
@@ -231,7 +236,7 @@ async function discoverBundles(sourcePath) {
         const st = await stat(bundleDir);
         if (!st.isDirectory()) continue;
         const cfgPath = path.join(bundleDir, 'config.json');
-        if (fs.existsSync(cfgPath)) bundles.push(bundleDir);
+        if (await pathExists(cfgPath)) bundles.push(bundleDir);
       } catch {
         // ignore
       }
@@ -345,7 +350,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
   // <bundle>/game.js or <bundle>/index.js). 5MB+ on a real project.
   for (const scriptName of ['game.js', 'index.js']) {
     const src = path.join(bundleDir, scriptName);
-    if (fs.existsSync(src)) {
+    if (await pathExists(src)) {
       await copyFile(src, path.join(bundleOut, scriptName));
       result.scriptBundle = scriptName;
     }
@@ -384,7 +389,7 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
   const skipImportWrite = isPureNativeClass(className);
 
   // --- Import document (one per asset, or inside a pack) ---
-  if (fs.existsSync(importSrc)) {
+  if (await pathExists(importSrc)) {
     const buf = await readFile(importSrc);
     if (isCcon(buf)) {
       importDoc = await decodeCconToDoc(buf, outBase);
@@ -410,7 +415,7 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
       }
       importRecovered = true;
     }
-  } else if (fs.existsSync(importSrcCcon)) {
+  } else if (await pathExists(importSrcCcon)) {
     const buf = await readFile(importSrcCcon);
     importDoc = await decodeCconToDoc(buf, outBase);
     importFromCcon = true;
@@ -436,7 +441,7 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
   //   2. `_native` value embedded in the import document (legacy plain form).
   //   3. Glob native/<prefix>/<uuid>.* on disk — this is how 2.4+ bundle
   //      builds ship, since their extensionMap is often empty.
-  if (nativeSrc && fs.existsSync(nativeSrc)) {
+  if (nativeSrc && (await pathExists(nativeSrc))) {
     await copyFile(nativeSrc, outBase + (nativeExt || ''));
     nativeRecovered = true;
   } else {
@@ -444,7 +449,7 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
     if (importDoc) probedExt = probeNativeExtension(importDoc);
     if (probedExt) {
       const probedSrc = getNativePath(cfg, uuid, probedExt);
-      if (probedSrc && fs.existsSync(probedSrc)) {
+      if (probedSrc && (await pathExists(probedSrc))) {
         await copyFile(probedSrc, outBase + probedExt);
         nativeRecovered = true;
       }
@@ -494,7 +499,7 @@ function classOutputDir(className) {
  */
 async function globNativeByUuid(cfg, uuid) {
   const dir = path.join(cfg.baseDir, cfg.nativeBase, uuid.slice(0, 2));
-  if (!fs.existsSync(dir)) return null;
+  if (!(await pathExists(dir))) return null;
   let entries;
   try {
     entries = await readdir(dir);
@@ -538,7 +543,7 @@ async function extractPackSection(cfg, packUuid, position) {
   let pack = cfg._packCache.get(packUuid);
   if (!pack) {
     const packSrc = getImportPath(cfg, packUuid, '.json');
-    if (!packSrc || !fs.existsSync(packSrc)) return null;
+    if (!packSrc || !(await pathExists(packSrc))) return null;
     try {
       pack = JSON.parse(await readFile(packSrc, 'utf-8'));
     } catch {
@@ -727,7 +732,7 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
 
   let total = 0;
   for (const dir of candidates) {
-    if (!fs.existsSync(dir)) continue;
+    if (!(await pathExists(dir))) continue;
     const entries = await readdir(dir);
     for (const entry of entries) {
       if (!entry.endsWith('.js')) continue;
@@ -746,7 +751,7 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
   // Recursive walk of src/assets/ (WeChat mini-game "_plugs" / plugin SDKs
   // live here as compiled .js files).
   const srcAssets = path.join(sourcePath, 'src', 'assets');
-  if (fs.existsSync(srcAssets)) {
+  if (await pathExists(srcAssets)) {
     for await (const file of walkJsFiles(srcAssets)) {
       const rel = path.relative(srcAssets, file);
       const dest = path.join(scriptsOut, 'plugs', rel);
@@ -767,13 +772,13 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
   const bootOut = path.join(outputPath, '_boot');
   for (const name of bootFiles) {
     const src = path.join(sourcePath, name);
-    if (fs.existsSync(src)) {
+    if (await pathExists(src)) {
       await mkdir(bootOut, { recursive: true });
       await copyFile(src, path.join(bootOut, name));
     }
   }
   const cocosDir = path.join(sourcePath, 'cocos');
-  if (fs.existsSync(cocosDir)) {
+  if (await pathExists(cocosDir)) {
     const cocosOut = path.join(bootOut, 'cocos');
     await mkdir(cocosOut, { recursive: true });
     for (const f of await readdir(cocosDir)) {

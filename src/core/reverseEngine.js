@@ -83,7 +83,7 @@ async function reverseProject(options) {
   };
 
   // JSC 解密预处理
-  const jscFiles = scanJscFiles(sourcePath);
+  const jscFiles = await scanJscFiles(sourcePath);
   let codePath = sourcePath;
   if (jscFiles.length > 0) {
     const decryptKey = key || global.config.decrypt?.key || (await extractKeyFromProject(sourcePath));
