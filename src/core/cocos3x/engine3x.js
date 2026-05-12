@@ -26,7 +26,7 @@ const { parseBundleConfig, getImportPath, getNativePath } = require('./bundleCon
 const { isCcon, decodeCcon } = require('./ccon');
 const { inspect } = require('./deserializer');
 const { rehydrateIFileData, rehydrateIPackedFileData } = require('./rehydrate');
-const { writeCocos2xProject } = require('./projectScaffold');
+const { writeCocos2xProject, writeCocos3xProject } = require('./projectScaffold');
 const { RecoveryReport } = require('./recoveryReport');
 const { runScriptRecoveryPipeline, emitTsProject } = require('./scriptRecovery');
 const generatorModule = require('@babel/generator');
@@ -172,7 +172,7 @@ async function reverseProject3x(options) {
       bundles: summary.bundles,
     });
   } else {
-    await writeProjectDescriptor(outputPath);
+    await writeProjectDescriptor(outputPath, projectFlavor.settings || {}, path.basename(sourcePath));
   }
 
   await writeRecoveryReport(outputPath, summary, sourcePath, report);
@@ -1021,18 +1021,11 @@ async function writeScriptMeta(scriptPath) {
   await writeFile(scriptPath + '.meta', JSON.stringify(meta, null, 2));
 }
 
-async function writeProjectDescriptor(outputPath) {
-  const descriptor = {
-    name: 'recovered-cocos3-project',
-    version: '3.0.0',
-    engine: 'cocos-creator-3',
-    packages: ['assets'],
-    recoveredBy: 'cc-reverse',
-  };
-  await writeFile(
-    path.join(outputPath, 'project.json'),
-    JSON.stringify(descriptor, null, 2),
-  );
+async function writeProjectDescriptor(outputPath, settings, sourceProjectName) {
+  await writeCocos3xProject(outputPath, {
+    projectName: sourceProjectName,
+    settings: settings || {},
+  });
 }
 
 async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
