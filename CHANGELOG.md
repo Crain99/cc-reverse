@@ -7,6 +7,8 @@ The format is based on Keep a Changelog.
 
 ## PR 8 — E2E harness + CLI dispatch fix + 首轮 golden 基线
 
+- **fix(report): align RECOVERY_REPORT declared count with filesystem.** `engine3x.writeRecoveryReport` now reconciles bundle-summary totals against a recursive non-`.meta` file count under `<out>/assets`, emitting an `__extras__` row when the bundle counter undercounts (recovered scripts, internal sub-assets, etc.). Resolves the `declared N vs actual M` failures on `slgq-reverse` (45 vs 62) and `cgxfd-reverse` (29 vs 33). Tests in `test/unit/3x-recoveryReport-declared.test.js`.
+- **fix(2x): emit `RECOVERY_REPORT.md` for cocos2x flow.** New `src/core/cocos2x/recoveryReport2x.js` writes a single-section markdown report whose declared count matches disk; wired into `reverseEngine.js` after `projectGenerator.generateProject()`. Resolves `RECOVERY_REPORT.md missing` on `dabaoyiqie-reverse`. Tests in `test/unit/2x-recoveryReport.test.js`. Post-fix: `npm test` 131 pass (was 123); `npm run e2e` all three samples 6/6 gates.
 - **CLI dispatch fix (`src/index.js`):** root program now has an `.action()` handler so `node bin/cc-reverse.js -p <path> -o <out>` actually enters `reverseProject` instead of silently printing `--help` (commander v11 requires an explicit root action when subcommands are registered). `--path` validation and the `CC_SOURCE_PATH` env var fallback are preserved.
 - **`validate` subcommand:** registered on the root program (`cc-reverse validate <outDir>`) as a unified entry point alongside the existing `bin/validate.js` shim, which is kept for back-compat.
 - **E2E harness (`test/e2e/`):**

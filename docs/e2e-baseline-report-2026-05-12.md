@@ -64,3 +64,43 @@ npm run e2e
 node bin/cc-reverse.js -p ~/mini/slgq-reverse -o /tmp/cc-reverse-e2e/slgq-reverse
 node bin/cc-reverse.js validate /tmp/cc-reverse-e2e/slgq-reverse
 ```
+
+## PR 8 修复后 (post-fix run, same machine)
+
+After the two fixes in PR 8 (`fix(report): align RECOVERY_REPORT declared
+count with filesystem` + `fix(2x): emit RECOVERY_REPORT.md for cocos2x flow`),
+re-running `npm run e2e` against the same three local samples now yields a
+clean **6/6 gate pass** for every sample.
+
+| Sample              | Cocos | Unpack exit | recoveryReport | cconV2 | typedArrays | layeredScripts | recoveryIndex | tsProject | Total |
+|---------------------|-------|-------------|----------------|--------|-------------|----------------|---------------|-----------|-------|
+| slgq-reverse        | 3.x   | 0           | pass           | pass   | pass        | pass           | pass          | pass      | 6/6   |
+| dabaoyiqie-reverse  | 2.x   | 0           | pass           | pass   | pass        | pass           | pass          | pass      | 6/6   |
+| cgxfd-reverse       | 3.x*  | 0           | pass           | pass   | pass        | pass           | pass          | pass      | 6/6   |
+
+(*) Diagnostic note: `cgxfd-reverse` is auto-detected as **3.x**, not 2.x as
+the original baseline assumed. The sample contains
+`assets/internal/config.json` and `assets/resources/config.json` — the 3.x
+bundle markers — so `detectProjectFlavor` correctly classifies it as 3.x and
+the 3.x pipeline writes the recovery report. The gap previously labelled
+"declared 29 vs actual 33" was the same 3.x bundle-undercount issue Commit 1
+fixes (the bundle summary tracks per-uuid records but the disk also receives
+recovered scripts and other auxiliary files; the reconciler now emits an
+`__extras__` row to keep `declared == actual`).
+
+`dabaoyiqie-reverse` is the only true 2.x sample and is now covered by Commit
+2's `writeRecoveryReport2x`.
+
+Numbers tied to this run:
+
+- slgq-reverse: previously `declared 45 vs actual 62` → now declared 62, gate `true`.
+- cgxfd-reverse: previously `declared 29 vs actual 33` → now declared 33, gate `true`.
+- dabaoyiqie-reverse: previously `RECOVERY_REPORT.md missing` → now written,
+  declared 0 (assets/ empty for this sample after unpack), gate `true`.
+
+Test counts:
+
+- `npm test`: 36 files, 131 tests pass (was 123 pre-fix).
+- `npm run e2e`: 3 samples, all `unpackStatus=0`, all `validateStatus=0`, all
+  6/6 gates pass.
+
