@@ -1,57 +1,57 @@
-# PR 6 — Wave 3: Extended Asset Coverage (Spine / DragonBones / Binary settings) Implementation Plan
+# PR 6 — Wave 3:扩展资源覆盖(Spine / DragonBones / 二进制 settings)实施计划
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Land Wave 3 of the 3.x overhaul — recover Spine (`sp.SkeletonData`), DragonBones (`dragonBones.DragonBonesAsset` / `DragonBonesAtlasAsset`), and decode binary `settings.bin` projects — plus carry over two PR 5 review nits (rich-meta collision for pure-native classes; `pickCocosVersion` regex tightening).
+**目标:** 落地 3.x 大整改的 Wave 3 — 恢复 Spine (`sp.SkeletonData`)、DragonBones (`dragonBones.DragonBonesAsset` / `DragonBonesAtlasAsset`),以及解码二进制 `settings.bin` 工程 — 并补完两个 PR 5 评审遗留小项(纯原生类 rich-meta 路径冲突;`pickCocosVersion` 正则收紧)。
 
-**Architecture:**
-- Extend `engine3x.js` rich-meta path to handle pure-native classes without colliding with the legacy `writeMeta` (which writes `<outBase>.meta`). Strategy: write rich meta to a sibling path that does not collide, OR allow rich-meta to overwrite the legacy stub when the class is in `KLASS_TO_IMPORTER` (the latter is intent — legacy was a placeholder).
-- Add Spine / DragonBones entries to `KLASS_TO_IMPORTER` and (in writeAssetMeta) emit the right `subMetas`/`userData` shape so Creator's editor recognises the pair (`.skel + .atlas + .png` for Spine; `_ske.json + _tex.json + _tex.png` for DragonBones).
-- Detect `src/settings.bin` (and hashed variants `settings.<md5>.bin`) in `detectProjectFlavor`; decode via the existing notepack subset (added in PR 2 for CCON v2) — the binary settings format is the same notepack envelope.
-- Tighten `pickCocosVersion`'s `version` regex from `/^\d+\./` to `/^3\./` (this branch only triggers in 3.x flavor).
+**架构：**
+- 扩展 `engine3x.js` 的 rich-meta 路径,使其能处理纯原生类且不与旧的 `writeMeta`(写 `<outBase>.meta`)冲突。策略:把 rich meta 写到不冲突的兄弟路径,**或**当类落在 `KLASS_TO_IMPORTER` 中时允许 rich-meta 覆盖旧的占位 stub(后者就是设计初衷 — 旧版只是 placeholder)。
+- 在 `KLASS_TO_IMPORTER` 中加入 Spine / DragonBones 条目,并在 `writeAssetMeta` 中输出正确的 `subMetas` / `userData` 形态,使 Creator 编辑器能识别成对资源(Spine 的 `.skel + .atlas + .png`;DragonBones 的 `_ske.json + _tex.json + _tex.png`)。
+- 在 `detectProjectFlavor` 中识别 `src/settings.bin`(以及哈希变体 `settings.<md5>.bin`);通过 PR 2 已加入的 notepack 子集(CCON v2 用)解码 — 二进制 settings 用同一个 notepack 信封。
+- 把 `pickCocosVersion` 的 `version` 正则从 `/^\d+\./` 收紧为 `/^3\./`(该分支只在 3.x flavor 下触发)。
 
-**Tech Stack:** Node.js CJS, vitest 1.x ESM tests, @babel/* (already in deps), notepack subset under `external/deserialize/notepack_decode.js` (PR 2).
+**技术栈:** Node.js CJS、vitest 1.x ESM 测试、@babel/*(已在 deps),`external/deserialize/notepack_decode.js`(PR 2)下的 notepack 子集。
 
 ---
 
-## Background — references
+## 背景 — 参考
 
-- Design doc: `docs/plans/2026-05-12-cocos-3x-overhaul-design.md` §2.2 Wave 3.
-- PR 5 plan/review carry-overs:
-  - Pure-native classes (e.g., `cc.BufferAsset`, `cc.Mesh`, `cc.AudioClip` in some builds) have `primaryExt === ''`, so `richMetaPath === outBase + '.meta'` — identical to the path `writeMeta(outBase, …)` already wrote. The `pathExists` guard makes the legacy stub win, suppressing the rich meta. Fix in Task 1.
-  - `pickCocosVersion` `version` branch regex `/^\d+\./` is too loose (would accept `2.4.x`). Fix in Task 2.
-- Engine landmarks (PR 6 worktree, post-PR5 baseline `781d864`):
+- 设计文档:`docs/plans/2026-05-12-cocos-3x-overhaul-design.md` §2.2 Wave 3。
+- PR 5 计划/评审遗留:
+  - 纯原生类(如 `cc.BufferAsset`、某些构建里的 `cc.Mesh`、`cc.AudioClip`)`primaryExt === ''`,所以 `richMetaPath === outBase + '.meta'` — 与 `writeMeta(outBase, …)` 已写入的路径相同。`pathExists` 的护栏让旧 stub 胜出,从而压住 rich meta。Task 1 修。
+  - `pickCocosVersion` 的 `version` 分支正则 `/^\d+\./` 太松(会接受 `2.4.x`)。Task 2 修。
+- 引擎地标(PR 6 worktree,PR5 后基线 `781d864`):
   - `src/core/cocos3x/engine3x.js`
-    - `CLASS_DIR` (lines ~70-88) — already maps `sp.SkeletonData`→`spine`, `dragonBones.*`→`dragonbones`.
-    - `KLASS_TO_IMPORTER` (lines 94-109) — 14 cc.* entries, missing Spine/DragonBones.
-    - `writeAssetMeta` (lines 131-144) — writes `<filePath>.meta` with `{ ver, importer, imported, uuid, files, subMetas, userData }`.
-    - `unpackAsset` rich-meta block (lines 638-655) — collision site.
-    - `recoverScripts()` and `classToImporter()` near line 880-905 (older inline map; keep but note the duplication).
+    - `CLASS_DIR`(约 70-88 行)— 已映射 `sp.SkeletonData`→`spine`,`dragonBones.*`→`dragonbones`。
+    - `KLASS_TO_IMPORTER`(94-109 行)— 14 条 cc.* 条目,缺 Spine/DragonBones。
+    - `writeAssetMeta`(131-144 行)— 写 `<filePath>.meta`,内容 `{ ver, importer, imported, uuid, files, subMetas, userData }`。
+    - `unpackAsset` rich-meta 块(638-655 行)— 冲突点。
+    - `recoverScripts()` 与 `classToImporter()` 在 880-905 行附近(老的内联映射;保留但记下重复)。
   - `src/core/cocos3x/projectScaffold.js`
-    - `pickCocosVersion` lines 240-246 — regex carry-over fix.
-    - `detectProjectFlavor` lives in `engine3x.js` (line 243), not here.
-  - `src/core/cocos3x/rehydrate.js` — `IFileData` / `IPackedFileData` decode entry; Spine `sp.SkeletonData` rehydration goes here.
+    - `pickCocosVersion` 240-246 行 — 遗留正则修复。
+    - `detectProjectFlavor` 在 `engine3x.js`(243 行),不在此处。
+  - `src/core/cocos3x/rehydrate.js` — `IFileData` / `IPackedFileData` 解码入口;Spine `sp.SkeletonData` 的 rehydrate 在此。
 
-- Baseline tests: 105 passing on this branch (`npm test`). Target after PR 6: ~125-130.
+- 基线测试:此分支 105 通过(`npm test`)。PR 6 后目标:约 125-130。
 
 ---
 
-## Task 0 — Baseline + worktree sanity
+## Task 0 — 基线 + worktree 健全性
 
-**Files:**
-- Touch only: `test/unit/pr6-baseline.test.js` (new, single placeholder test that asserts `KLASS_TO_IMPORTER` is exported).
+**文件：**
+- 仅触碰:`test/unit/pr6-baseline.test.js`(新增,单一 placeholder 测试,断言 `KLASS_TO_IMPORTER` 已被导出)。
 
-**Step 1: confirm worktree**
+**Step 1:确认 worktree**
 
-Run: `git status && git branch --show-current`
-Expected: clean tree, branch `feature/pr6-wave3-extended-assets`.
+运行:`git status && git branch --show-current`
+预期:工作树干净,分支 `feature/pr6-wave3-extended-assets`。
 
-**Step 2: confirm baseline**
+**Step 2:确认基线**
 
-Run: `npm test 2>&1 | tail -5`
-Expected: `Test Files  X passed`, total `105 passed`.
+运行:`npm test 2>&1 | tail -5`
+预期:`Test Files  X passed`,合计 `105 passed`。
 
-**Step 3: write smoke test**
+**Step 3:写 smoke 测试**
 
 ```js
 // test/unit/pr6-baseline.test.js
@@ -66,12 +66,12 @@ describe('PR6 baseline', () => {
 });
 ```
 
-**Step 4: run the smoke test**
+**Step 4:跑 smoke 测试**
 
-Run: `npx vitest run test/unit/pr6-baseline.test.js`
-Expected: 1 passed.
+运行:`npx vitest run test/unit/pr6-baseline.test.js`
+预期:1 passed。
 
-**Step 5: commit**
+**Step 5:提交**
 
 ```bash
 git add test/unit/pr6-baseline.test.js docs/plans/2026-05-12-pr6-wave3-extended-assets.md
@@ -80,17 +80,17 @@ git commit -m "test(pr6): baseline smoke test (105→106)"
 
 ---
 
-## Task 1 — Carry-over: rich-meta collision for pure-native classes
+## Task 1 — 遗留:纯原生类的 rich-meta 路径冲突
 
-**Problem:** When `primaryExt === ''` (e.g., `cc.BufferAsset`), the legacy `writeMeta(outBase, …)` writes `<outBase>.meta` first, then the PR 5 rich-meta block bails because `pathExists(richMetaPath)` is true.
+**问题:** 当 `primaryExt === ''`(如 `cc.BufferAsset`)时,旧的 `writeMeta(outBase, …)` 先写入 `<outBase>.meta`,随后 PR 5 的 rich-meta 块由于 `pathExists(richMetaPath)` 为真而退出。
 
-**Fix strategy:** When the class is in `KLASS_TO_IMPORTER`, the rich meta is the *intended* output and should override the legacy stub. Drop the `pathExists` guard for the rich-meta path and let it overwrite. The legacy stub still serves classes outside `KLASS_TO_IMPORTER`.
+**修复策略:** 当类在 `KLASS_TO_IMPORTER` 中时,rich meta 才是*预期*输出,应覆盖旧 stub。去掉 rich-meta 路径上的 `pathExists` 护栏,直接覆写。旧 stub 仍服务 `KLASS_TO_IMPORTER` 之外的类。
 
-**Files:**
-- Modify: `src/core/cocos3x/engine3x.js` lines 644-654 (rich-meta block).
-- Test: `test/unit/3x-richmeta-pure-native.test.js` (new).
+**文件：**
+- 修改:`src/core/cocos3x/engine3x.js` 644-654 行(rich-meta 块)。
+- 测试:`test/unit/3x-richmeta-pure-native.test.js`(新增)。
 
-**Step 1: failing test**
+**Step 1:写失败测试**
 
 ```js
 // test/unit/3x-richmeta-pure-native.test.js
@@ -122,12 +122,12 @@ describe('rich-meta on pure-native classes (PR6 carry-over #1)', () => {
 });
 ```
 
-Run: `npx vitest run test/unit/3x-richmeta-pure-native.test.js`
-Expected: PASS already (writeAssetMeta unconditionally overwrites). Then add second test asserting `unpackAsset` end-to-end behavior — but simpler is to fix the call-site directly.
+运行:`npx vitest run test/unit/3x-richmeta-pure-native.test.js`
+预期:本身已 PASS(writeAssetMeta 无条件覆写)。然后再加第二个测试,从端到端断言 `unpackAsset` 行为 — 但更简单是直接修调用点。
 
-**Step 2: edit engine3x.js**
+**Step 2:编辑 engine3x.js**
 
-Replace lines 644-655:
+把 644-655 行替换为:
 
 ```js
   // R12 — emit a richer editor-style .meta for non-script assets when class
@@ -146,7 +146,7 @@ Replace lines 644-655:
   }
 ```
 
-**Step 3: add an integration-style test asserting the overwrite happens via the public path**
+**Step 3:加一个集成式测试,从公共路径上断言覆写**
 
 ```js
   it('rich meta survives when its path collides with the legacy stub', async () => {
@@ -161,12 +161,12 @@ Replace lines 644-655:
   });
 ```
 
-**Step 4: run the full suite**
+**Step 4:跑全量套件**
 
-Run: `npm test 2>&1 | tail -5`
-Expected: 108 passed.
+运行:`npm test 2>&1 | tail -5`
+预期:108 passed。
 
-**Step 5: commit**
+**Step 5:提交**
 
 ```bash
 git add src/core/cocos3x/engine3x.js test/unit/3x-richmeta-pure-native.test.js
@@ -175,13 +175,13 @@ git commit -m "fix(3x meta): overwrite legacy stub when class has rich importer 
 
 ---
 
-## Task 2 — Carry-over: tighten `pickCocosVersion` 3.x branch regex
+## Task 2 — 遗留:收紧 `pickCocosVersion` 3.x 分支正则
 
-**Files:**
-- Modify: `src/core/cocos3x/projectScaffold.js:244` (regex `/^\d+\./` → `/^3\./`).
-- Test: `test/unit/3x-pickCocosVersion.test.js` (new).
+**文件：**
+- 修改:`src/core/cocos3x/projectScaffold.js:244`(正则 `/^\d+\./` → `/^3\./`)。
+- 测试:`test/unit/3x-pickCocosVersion.test.js`(新增)。
 
-**Step 1: failing test**
+**Step 1:写失败测试**
 
 ```js
 // test/unit/3x-pickCocosVersion.test.js
@@ -211,10 +211,10 @@ describe('pickCocosVersion (PR6 carry-over #2)', () => {
 });
 ```
 
-Run: `npx vitest run test/unit/3x-pickCocosVersion.test.js`
-Expected: FAIL on the 2.x rejection case (regex currently `/^\d+\./`), and FAIL on import (not exported yet).
+运行:`npx vitest run test/unit/3x-pickCocosVersion.test.js`
+预期:2.x 拒绝用例 FAIL(当前正则 `/^\d+\./`),且 import FAIL(还没导出)。
 
-**Step 2: edit projectScaffold.js**
+**Step 2:编辑 projectScaffold.js**
 
 ```js
 function pickCocosVersion(settings) {
@@ -228,12 +228,12 @@ function pickCocosVersion(settings) {
 module.exports = { writeCocos2xProject, writeCocos3xProject, pickCocosVersion };
 ```
 
-**Step 3: run targeted test**
+**Step 3:跑定向测试**
 
-Run: `npx vitest run test/unit/3x-pickCocosVersion.test.js`
-Expected: 5 passed.
+运行:`npx vitest run test/unit/3x-pickCocosVersion.test.js`
+预期:5 passed。
 
-**Step 4: commit**
+**Step 4:提交**
 
 ```bash
 git add src/core/cocos3x/projectScaffold.js test/unit/3x-pickCocosVersion.test.js
@@ -242,28 +242,28 @@ git commit -m "fix(3x scaffold): pickCocosVersion only accepts 3.x in version br
 
 ---
 
-## Task 3 — R14: Spine `sp.SkeletonData` recovery
+## Task 3 — R14:Spine `sp.SkeletonData` 恢复
 
-**Spine asset shape in 3.x:**
-- Editor source: `<name>.skel` (or `.json`) + `<name>.atlas` + `<name>.png`.
-- Imported `sp.SkeletonData` JSON references skeleton + atlas + texture(s) via `_native` (skeleton binary blob) and `textures: [Texture2D uuids]`, with `atlasText` inline OR atlas as a separate raw text asset.
-- Native blob lands in `native/<2>/<uuid>.skel` (or `.json`).
+**3.x 中 Spine 资源形态:**
+- 编辑器源:`<name>.skel`(或 `.json`)+ `<name>.atlas` + `<name>.png`。
+- 导入后的 `sp.SkeletonData` JSON 通过 `_native`(skeleton 二进制 blob)与 `textures: [Texture2D uuids]` 引用骨骼 + atlas + 纹理,`atlasText` 内联或 atlas 作为独立的纯文本资源。
+- 原生 blob 落在 `native/<2>/<uuid>.skel`(或 `.json`)。
 
-**Strategy (minimum viable):**
-1. Add `'sp.SkeletonData': 'spine'` to `KLASS_TO_IMPORTER`.
-2. Extend `writeAssetMeta` to emit a `subMetas` map with one entry per referenced texture when klass === `sp.SkeletonData` (best-effort, references uuids the rehydrator already resolved).
-3. Add a Spine-specific entry to `inferImportExt` so the import file is written as `<uuid>.json` (the deserialized SkeletonData document) and the native blob keeps its `.skel`/`.json` extension.
-4. Cross-link in `unpackAsset` so the native skeleton file lands beside the import JSON in `assets/spine/<uuid>/`.
+**策略(MVP):**
+1. 在 `KLASS_TO_IMPORTER` 加 `'sp.SkeletonData': 'spine'`。
+2. 扩展 `writeAssetMeta`:当 klass === `sp.SkeletonData` 时,在 `subMetas` 中按引用纹理逐个生成条目(尽力而为,使用 rehydrator 已解析的 uuids)。
+3. 在 `inferImportExt` 中给 Spine 加专门分支,使 import 文件写为 `<uuid>.json`(反序列化后的 SkeletonData 文档),原生 blob 保留 `.skel`/`.json` 扩展名。
+4. 在 `unpackAsset` 中跨链接,使原生骨骼文件落在 import JSON 同侧 `assets/spine/<uuid>/`。
 
-**Files:**
-- Modify: `src/core/cocos3x/engine3x.js`
-  - `KLASS_TO_IMPORTER` add `'sp.SkeletonData': 'spine'`.
-  - `inferImportExt` add `case 'sp.SkeletonData': return '.json'`.
-  - `writeAssetMeta` extend with optional `extras: { textures, atlasUuid }` to populate `subMetas`.
-  - `unpackAsset` Spine branch: when `nativeRecovered && className === 'sp.SkeletonData'`, also detect atlas sibling.
-- Test: `test/unit/3x-spine-recovery.test.js` (new).
+**文件：**
+- 修改:`src/core/cocos3x/engine3x.js`
+  - `KLASS_TO_IMPORTER` 加 `'sp.SkeletonData': 'spine'`。
+  - `inferImportExt` 加 `case 'sp.SkeletonData': return '.json'`。
+  - `writeAssetMeta` 增加可选 `extras: { textures, atlasUuid }` 用于填 `subMetas`。
+  - `unpackAsset` Spine 分支:`nativeRecovered && className === 'sp.SkeletonData'` 时也探测同侧 atlas。
+- 测试:`test/unit/3x-spine-recovery.test.js`(新增)。
 
-**Step 1: failing test (table-driven)**
+**Step 1:写失败测试(table-driven)**
 
 ```js
 // test/unit/3x-spine-recovery.test.js
@@ -295,10 +295,10 @@ describe('R14 Spine recovery', () => {
 });
 ```
 
-Run: `npx vitest run test/unit/3x-spine-recovery.test.js`
-Expected: FAIL — `sp.SkeletonData` not in `KLASS_TO_IMPORTER`, `extras` not honored.
+运行:`npx vitest run test/unit/3x-spine-recovery.test.js`
+预期:FAIL — `sp.SkeletonData` 不在 `KLASS_TO_IMPORTER`,`extras` 未被尊重。
 
-**Step 2: edit engine3x.js**
+**Step 2:编辑 engine3x.js**
 
 ```js
 // KLASS_TO_IMPORTER:
@@ -325,9 +325,9 @@ async function writeAssetMeta(filePath, opts) {
 }
 ```
 
-**Step 3: thread `extras` from `unpackAsset`**
+**Step 3:从 `unpackAsset` 串入 `extras`**
 
-In the rich-meta block, when `className === 'sp.SkeletonData'`, attempt to pull `textures` and `atlas` uuids from the rehydrated import document (best-effort — guard heavily; if the doc isn't shaped as expected, just skip extras).
+在 rich-meta 块中,当 `className === 'sp.SkeletonData'` 时,尝试从 rehydrated import 文档中拉取 `textures` 与 `atlas` 的 uuids(尽力而为 — 严密保护;如果文档形态非预期,跳过 extras)。
 
 ```js
 let extras;
@@ -344,16 +344,16 @@ if (className === 'sp.SkeletonData' && importRecovered) {
 await writeAssetMeta(primaryFile, { uuid, klass: className, extras });
 ```
 
-**Step 4: add `inferImportExt` case**
+**Step 4:加 `inferImportExt` 分支**
 
-Find the `inferImportExt` function in engine3x.js and add `case 'sp.SkeletonData': return '.json';` if not already covered (it likely defaults to `.json` already; verify by reading the function).
+定位 engine3x.js 中的 `inferImportExt`,若尚未覆盖则加 `case 'sp.SkeletonData': return '.json';`(它默认大概率已经返回 `.json`;通过阅读函数体确认)。
 
-**Step 5: run tests**
+**Step 5:跑测试**
 
-Run: `npm test 2>&1 | tail -5`
-Expected: 110 passed (108 + 2 new).
+运行:`npm test 2>&1 | tail -5`
+预期:110 passed(108 + 2 新增)。
 
-**Step 6: commit**
+**Step 6:提交**
 
 ```bash
 git add src/core/cocos3x/engine3x.js test/unit/3x-spine-recovery.test.js
@@ -362,22 +362,22 @@ git commit -m "feat(3x R14): recover sp.SkeletonData with importer + textures/at
 
 ---
 
-## Task 4 — R15: DragonBones recovery
+## Task 4 — R15:DragonBones 恢复
 
-**DragonBones 3.x shape:**
-- `dragonBones.DragonBonesAsset` — references skeleton text/binary + atlas asset uuid.
-- `dragonBones.DragonBonesAtlasAsset` — references atlas text/binary + texture uuid.
+**3.x 中 DragonBones 形态:**
+- `dragonBones.DragonBonesAsset` — 引用骨骼 text/binary + atlas 资源 uuid。
+- `dragonBones.DragonBonesAtlasAsset` — 引用 atlas text/binary + 纹理 uuid。
 
-**Strategy:** Same skeleton as Spine. Already added importer mappings in Task 3 (`'dragonbones'`, `'dragonbones-atlas'`). Now add `extras` extraction:
+**策略:** 与 Spine 一致。Task 3 已经加了 importer 映射(`'dragonbones'`、`'dragonbones-atlas'`)。这里加 `extras` 抽取:
 
-- For `DragonBonesAsset`: pull `_atlasUuid` / `dragonBonesAtlas.__uuid__` and store under `userData.atlasUuid`.
-- For `DragonBonesAtlasAsset`: pull `_textureUuid` / `texture.__uuid__` and store under `userData.textureUuid`.
+- `DragonBonesAsset`:取 `_atlasUuid` / `dragonBonesAtlas.__uuid__`,记入 `userData.atlasUuid`。
+- `DragonBonesAtlasAsset`:取 `_textureUuid` / `texture.__uuid__`,记入 `userData.textureUuid`。
 
-**Files:**
-- Modify: `src/core/cocos3x/engine3x.js` (extras-extraction switch in unpackAsset).
-- Test: `test/unit/3x-dragonbones-recovery.test.js` (new).
+**文件：**
+- 修改:`src/core/cocos3x/engine3x.js`(unpackAsset 中的 extras 抽取 switch)。
+- 测试:`test/unit/3x-dragonbones-recovery.test.js`(新增)。
 
-**Step 1: failing test**
+**Step 1:写失败测试**
 
 ```js
 // test/unit/3x-dragonbones-recovery.test.js
@@ -406,9 +406,9 @@ describe('R15 DragonBones recovery', () => {
 });
 ```
 
-**Step 2: extend the extras-extraction switch in `unpackAsset`**
+**Step 2:扩展 `unpackAsset` 中的 extras 抽取 switch**
 
-Reuse the structure from Task 3:
+复用 Task 3 的结构:
 
 ```js
 let extras;
@@ -431,12 +431,12 @@ if (importRecovered) {
 }
 ```
 
-**Step 3: run tests**
+**Step 3:跑测试**
 
-Run: `npm test 2>&1 | tail -5`
-Expected: 112 passed.
+运行:`npm test 2>&1 | tail -5`
+预期:112 passed。
 
-**Step 4: commit**
+**Step 4:提交**
 
 ```bash
 git add src/core/cocos3x/engine3x.js test/unit/3x-dragonbones-recovery.test.js
@@ -445,19 +445,19 @@ git commit -m "feat(3x R15): recover DragonBones asset/atlas with cross-uuid ext
 
 ---
 
-## Task 5 — R16: Binary `settings.bin` decoding
+## Task 5 — R16:二进制 `settings.bin` 解码
 
-**Files:**
-- Modify: `src/core/cocos3x/engine3x.js` `detectProjectFlavor` (line ~243).
-- Possibly add: `src/core/cocos3x/binarySettings.js` (thin wrapper around the existing notepack subset).
-- Test: `test/unit/3x-binary-settings.test.js` (new) + a fixture under `test/fixtures/3x-binary-settings/`.
+**文件：**
+- 修改:`src/core/cocos3x/engine3x.js` `detectProjectFlavor`(约 243 行)。
+- 可能新增:`src/core/cocos3x/binarySettings.js`(对现有 notepack 子集的薄包装)。
+- 测试:`test/unit/3x-binary-settings.test.js`(新增)+ `test/fixtures/3x-binary-settings/` 下的 fixture。
 
-**Step 1: investigate the existing notepack module**
+**Step 1:研究现有的 notepack 模块**
 
-Run: `ls external/deserialize/ && grep -l "notepack" src/core/cocos3x/*.js`
-Note its export shape (likely `decode(buf) → object`).
+运行:`ls external/deserialize/ && grep -l "notepack" src/core/cocos3x/*.js`
+记下其导出形态(很可能是 `decode(buf) → object`)。
 
-**Step 2: failing test**
+**Step 2:写失败测试**
 
 ```js
 // test/unit/3x-binary-settings.test.js
@@ -497,15 +497,15 @@ describe('R16 binary settings detection', () => {
 });
 ```
 
-**Step 3: build a fixture**
+**Step 3:构建 fixture**
 
-Hand-roll a tiny `settings.bin` by running the existing notepack encoder (or writing a one-shot Node script) on `{ engineVersion: '3.8.0', launchScene: 'db://assets/Main.scene', assets: {} }` and saving to `test/fixtures/3x-binary-settings/settings.bin`. If the local module is decode-only, install `notepack.io` as a devDependency *only* for the fixture-build script, then commit the fixture and uninstall.
+通过对现有 notepack encoder(或一次性的 Node 脚本)给 `{ engineVersion: '3.8.0', launchScene: 'db://assets/Main.scene', assets: {} }` 编码,产物存为 `test/fixtures/3x-binary-settings/settings.bin`,手工搓一个微型 `settings.bin`。如果本地模块只支持 decode,把 `notepack.io` 当成**仅**用于 fixture 构造脚本的 devDependency,跑一次后提交 fixture 并卸掉。
 
-Cleaner alternative: write the encoder script as `scripts/build-binary-settings-fixture.js`, run it once, commit the output, document it.
+更干净的方式:把编码脚本写成 `scripts/build-binary-settings-fixture.js`,跑一次,把产物提交,做好文档。
 
-**Step 4: extend `detectProjectFlavor`**
+**Step 4:扩展 `detectProjectFlavor`**
 
-Replace the 3.x marker block:
+把 3.x 标记块替换为:
 
 ```js
 async function detectProjectFlavor(sourcePath) {
@@ -544,16 +544,16 @@ async function findBinarySettings(srcDir) {
 }
 ```
 
-**Step 5: export `detectProjectFlavor` for tests**
+**Step 5:为测试导出 `detectProjectFlavor`**
 
-Add to `module.exports` at end of engine3x.js.
+在 engine3x.js 末尾的 `module.exports` 中加入。
 
-**Step 6: run tests**
+**Step 6:跑测试**
 
-Run: `npm test 2>&1 | tail -5`
-Expected: 114 passed.
+运行:`npm test 2>&1 | tail -5`
+预期:114 passed。
 
-**Step 7: commit**
+**Step 7:提交**
 
 ```bash
 git add src/core/cocos3x/engine3x.js test/unit/3x-binary-settings.test.js test/fixtures/3x-binary-settings/ scripts/build-binary-settings-fixture.js
@@ -562,15 +562,15 @@ git commit -m "feat(3x R16): decode src/settings.bin (and hashed variants) via n
 
 ---
 
-## Task 6 — Integration smoke + CHANGELOG + README + PR
+## Task 6 — 集成 smoke + CHANGELOG + README + PR
 
-**Step 1: sanity end-to-end on a synthetic micro-bundle**
+**Step 1:在合成微型 bundle 上做端到端 sanity**
 
-If a synthetic 3.x fixture exists under `test/fixtures/`, run an integration test that recovers it and asserts: a `.meta` for a `cc.BufferAsset` exists with `importer: "buffer"`. Otherwise skip and rely on unit coverage.
+如果 `test/fixtures/` 下存在合成 3.x fixture,跑一个集成测试,把它恢复后断言:`cc.BufferAsset` 的 `.meta` 存在且 `importer: "buffer"`。否则跳过,仅靠单元覆盖。
 
-**Step 2: update CHANGELOG**
+**Step 2:更新 CHANGELOG**
 
-Append to `CHANGELOG.md`:
+追加到 `CHANGELOG.md`:
 
 ```markdown
 ## PR 6 — Wave 3 extended assets (2026-05-12)
@@ -582,20 +582,20 @@ Append to `CHANGELOG.md`:
 - fix(3x scaffold): `pickCocosVersion` only honours `version` when it begins with `3.`.
 ```
 
-**Step 3: README touch-up**
+**Step 3:README 微调**
 
-Under "Supported assets" / "What we recover" add:
+在 "Supported assets" / "What we recover" 下增添:
 
-- Spine `sp.SkeletonData` (importer + texture/atlas cross-refs in `.meta`).
-- DragonBones `DragonBonesAsset` / `DragonBonesAtlasAsset`.
-- Binary `settings.bin` projects.
+- Spine `sp.SkeletonData`(在 `.meta` 中带 importer + texture/atlas 交叉引用)。
+- DragonBones `DragonBonesAsset` / `DragonBonesAtlasAsset`。
+- 二进制 `settings.bin` 工程。
 
-**Step 4: full test run**
+**Step 4:跑全量**
 
-Run: `npm test 2>&1 | tail -10`
-Expected: ~114-116 passing, 0 failing.
+运行:`npm test 2>&1 | tail -10`
+预期:约 114-116 通过,0 失败。
 
-**Step 5: commit + push + PR**
+**Step 5:commit + push + PR**
 
 ```bash
 git add CHANGELOG.md README.md
@@ -632,8 +632,8 @@ EOF
 
 ## Definition of Done
 
-- [ ] All 6 tasks committed.
-- [ ] `npm test` ≥ 114 passing, 0 failing.
-- [ ] CHANGELOG + README updated.
-- [ ] PR opened against `main` on `clawnet-ai/cc-reverse`.
-- [ ] No degradation on 2.x regression tests (dabaoyiqie / cgxfd) — this PR only touches `cocos3x/`.
+- [ ] 全部 6 个 task 已 commit。
+- [ ] `npm test` ≥ 114 通过、0 失败。
+- [ ] CHANGELOG + README 已更新。
+- [ ] PR 已对 `clawnet-ai/cc-reverse` 的 `main` 提交。
+- [ ] 2.x 回归测试无退化(dabaoyiqie / cgxfd)— 本 PR 仅触碰 `cocos3x/`。

@@ -1,52 +1,52 @@
-# PR 1 — Wave 0 Foundation Implementation Plan
+# PR 1 — Wave 0 基础实现计划
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build the corrective baseline for the 3.x overhaul: harden JSC key extraction (R1), convert all sync IO to async (R3), introduce per-asset error isolation (R4), and stand up the vitest test infrastructure used by every later PR.
+**目标:** 为 3.x 大整改构建纠正性基线：加固 JSC key 提取（R1），将所有同步 IO 转为异步（R3），引入逐资源错误隔离（R4），并搭建后续每个 PR 都使用的 vitest 测试基础设施。
 
-**Architecture:** Three small refactors plus the test scaffold. R1 expands key sources and adds byte-array decoding; R3 mechanically swaps `fs.*Sync` for `fs.promises`; R4 wraps each asset in a try/catch and accumulates errors into a per-bundle report. Quality gates (`cc-reverse validate`) and the golden-sample baseline framework live here so PR 2+ can use them.
+**架构:** 三个小重构加测试脚手架。R1 扩展 key 来源并增加字节数组解码；R3 机械地将 `fs.*Sync` 替换为 `fs.promises`；R4 将每个资源包裹在 try/catch 中，并将错误聚合为按 bundle 的报告。质量门（`cc-reverse validate`）和 golden-sample 基线框架放在这里，使 PR 2+ 可以使用。
 
-**Tech Stack:** Node 14+, vitest 1.x, fs/promises, existing xxtea-node + pako.
+**技术栈:** Node 14+、vitest 1.x、fs/promises、现有 xxtea-node + pako。
 
 ---
 
-## Task 0: Worktree, deps, baseline
+## Task 0: Worktree、依赖、基线
 
-**Files:**
-- Modify: `package.json`
-- Create: `vitest.config.js`
-- Create: `test/unit/.gitkeep`
-- Create: `test/integration/.gitkeep`
-- Create: `test/e2e/.gitkeep`
-- Create: `test/fixtures.config.js`
+**文件:**
+- 修改: `package.json`
+- 创建: `vitest.config.js`
+- 创建: `test/unit/.gitkeep`
+- 创建: `test/integration/.gitkeep`
+- 创建: `test/e2e/.gitkeep`
+- 创建: `test/fixtures.config.js`
 
-**Step 1: Create the worktree**
+**Step 1: 创建 worktree**
 
 ```bash
 git worktree add .worktrees/pr1-wave0-foundation -b feature/pr1-wave0-foundation main
 cd .worktrees/pr1-wave0-foundation
 ```
 
-**Step 2: Add vitest as devDependency**
+**Step 2: 把 vitest 加入 devDependency**
 
-Edit `package.json` `devDependencies`:
+编辑 `package.json` `devDependencies`：
 ```json
 "vitest": "^1.6.0"
 ```
-Replace `"test": "jest"` with `"test": "vitest run"` and add:
+将 `"test": "jest"` 替换为 `"test": "vitest run"` 并添加：
 ```json
 "test:watch": "vitest",
 "e2e": "vitest run --dir test/e2e",
 "validate": "node bin/validate.js"
 ```
-Remove `jest` from devDependencies.
+从 devDependencies 中移除 `jest`。
 
-Run: `npm install`
-Expected: `vitest` appears under `node_modules/`, `jest` removed.
+执行：`npm install`
+预期：`vitest` 出现在 `node_modules/` 下，`jest` 已移除。
 
-**Step 3: Create vitest config**
+**Step 3: 创建 vitest 配置**
 
-`vitest.config.js`:
+`vitest.config.js`：
 ```js
 const { defineConfig } = require('vitest/config');
 module.exports = defineConfig({
@@ -58,9 +58,9 @@ module.exports = defineConfig({
 });
 ```
 
-**Step 4: Create the fixtures registry**
+**Step 4: 创建 fixtures registry**
 
-`test/fixtures.config.js`:
+`test/fixtures.config.js`：
 ```js
 const path = require('path');
 const home = require('os').homedir();
@@ -73,16 +73,16 @@ module.exports = {
 
 **Step 5: Sanity test**
 
-Create `test/unit/sanity.test.js`:
+创建 `test/unit/sanity.test.js`：
 ```js
 const { describe, it, expect } = require('vitest');
 describe('sanity', () => { it('runs', () => { expect(1).toBe(1); }); });
 ```
 
-Run: `npm test`
-Expected: `1 passed`.
+执行：`npm test`
+预期：`1 passed`。
 
-**Step 6: Commit**
+**Step 6: 提交**
 
 ```bash
 git add package.json vitest.config.js test/
@@ -95,19 +95,19 @@ git commit -m "chore(test): replace jest with vitest, scaffold test tree
 
 ---
 
-## Task 1: R1 — JSC key extraction hardening (failing tests first)
+## Task 1: R1 — JSC key 提取加固（先写失败测试）
 
-**Files:**
-- Modify: `src/core/jscDecryptor.js`
-- Create: `test/unit/jscDecryptor.test.js`
-- Create: `test/integration/jsc-keys.test.js`
-- Create: `test/fixtures/jsc-keys/` (small synthetic snippets)
+**文件:**
+- 修改: `src/core/jscDecryptor.js`
+- 创建: `test/unit/jscDecryptor.test.js`
+- 创建: `test/integration/jsc-keys.test.js`
+- 创建: `test/fixtures/jsc-keys/`（小型合成片段）
 
-### Subtask 1.1: Tests for expanded source list
+### Subtask 1.1: 扩展来源列表的测试
 
-**Step 1: Write failing test**
+**Step 1: 编写失败测试**
 
-`test/unit/jscDecryptor.test.js`:
+`test/unit/jscDecryptor.test.js`：
 ```js
 const { describe, it, expect } = require('vitest');
 const path = require('path');
@@ -159,16 +159,16 @@ describe('extractKeyFromProject — source coverage', () => {
 });
 ```
 
-**Step 2: Run, expect failures**
+**Step 2: 运行，预期失败**
 
-Run: `npm test -- jscDecryptor`
-Expected: 3 of 5 fail (`application.js`, `cocos-js`, `byte-array`, `settings.json`); 1-2 may pass since current impl finds some of these.
+执行：`npm test -- jscDecryptor`
+预期：5 个中 3 个失败（`application.js`、`cocos-js`、`byte-array`、`settings.json`）；可能有 1-2 个通过，因为现有实现已能找到其中部分。
 
-### Subtask 1.2: Implement async + expanded extraction
+### Subtask 1.2: 实现异步 + 扩展提取
 
-**Step 3: Rewrite `extractKeyFromProject` async with expanded sources**
+**Step 3: 重写 `extractKeyFromProject` 为异步并扩展来源**
 
-In `src/core/jscDecryptor.js` replace the function with:
+在 `src/core/jscDecryptor.js` 中将该函数替换为：
 ```js
 const fsp = require('fs/promises');
 
@@ -226,16 +226,16 @@ async function extractKeyFromProject(sourcePath) {
 }
 ```
 
-**Step 4: Run tests, expect pass**
+**Step 4: 运行测试，预期通过**
 
-Run: `npm test -- jscDecryptor`
-Expected: 5 passed.
+执行：`npm test -- jscDecryptor`
+预期：5 passed。
 
-### Subtask 1.3: Friendly failure when key is needed but missing
+### Subtask 1.3: key 缺失时给出友好失败信息
 
-**Step 5: Add a probe API**
+**Step 5: 添加探针 API**
 
-Add to `jscDecryptor.js`:
+在 `jscDecryptor.js` 中添加：
 ```js
 async function describeEncryptionState(sourcePath) {
   const jscs = await scanJscFilesAsync(sourcePath);
@@ -246,7 +246,7 @@ async function describeEncryptionState(sourcePath) {
 module.exports = { ...module.exports, describeEncryptionState };
 ```
 
-Test in `test/unit/jscDecryptor.test.js`:
+`test/unit/jscDecryptor.test.js` 中的测试：
 ```js
 describe('describeEncryptionState', () => {
   it('reports unencrypted when no jsc', async () => {
@@ -256,7 +256,7 @@ describe('describeEncryptionState', () => {
 });
 ```
 
-**Step 6: Commit**
+**Step 6: 提交**
 
 ```bash
 git add src/core/jscDecryptor.js test/unit/jscDecryptor.test.js
@@ -270,16 +270,16 @@ git commit -m "feat(jsc): expand key extraction sources and async-ify (R1)
 
 ---
 
-## Task 2: R3 — Sync IO → Async sweep (jscDecryptor + engine3x)
+## Task 2: R3 — 同步 IO → 异步扫荡（jscDecryptor + engine3x）
 
-**Files:**
-- Modify: `src/core/jscDecryptor.js`
-- Modify: `src/core/cocos3x/engine3x.js`
-- Create: `test/unit/asyncIo.guard.test.js`
+**文件:**
+- 修改: `src/core/jscDecryptor.js`
+- 修改: `src/core/cocos3x/engine3x.js`
+- 创建: `test/unit/asyncIo.guard.test.js`
 
-**Step 1: Write a static guard test**
+**Step 1: 编写静态守卫测试**
 
-`test/unit/asyncIo.guard.test.js`:
+`test/unit/asyncIo.guard.test.js`：
 ```js
 const { describe, it, expect } = require('vitest');
 const fs = require('fs');
@@ -303,16 +303,16 @@ describe('async io guard', () => {
 });
 ```
 
-(The test itself uses sync fs intentionally — guards run in test code.)
+（测试本身故意使用同步 fs — 守卫只在测试代码中运行。）
 
-**Step 2: Run, expect failures**
+**Step 2: 运行，预期失败**
 
-Run: `npm test -- asyncIo`
-Expected: 2 failed (both files).
+执行：`npm test -- asyncIo`
+预期：2 failed（两个文件都失败）。
 
-**Step 3: Convert jscDecryptor.js**
+**Step 3: 转换 jscDecryptor.js**
 
-Rewrite `scanJscFiles` as `scanJscFilesAsync`, the `decryptProject` body to use `fs/promises`. Provide both names to keep old callers working but mark sync as deprecated:
+将 `scanJscFiles` 重写为 `scanJscFilesAsync`，把 `decryptProject` 主体改为使用 `fs/promises`。同时提供两个名字以兼容旧调用方，但将同步版本标记为 deprecated：
 ```js
 async function scanJscFilesAsync(dirPath) {
   const out = [];
@@ -329,7 +329,7 @@ async function scanJscFilesAsync(dirPath) {
 }
 ```
 
-In `decryptProject`, replace the loop body:
+在 `decryptProject` 中替换循环体：
 ```js
 const data = await fsp.readFile(jscFile);
 await fsp.mkdir(path.dirname(outputFile), { recursive: true });
@@ -337,26 +337,26 @@ const result = decryptJscBuffer(data, key);
 if (result) { await fsp.writeFile(outputFile, result); decrypted++; }
 ```
 
-Also wrap each file in try/catch (pre-empts R4):
+并将每个文件包裹在 try/catch 中（提前体现 R4）：
 ```js
 try { /* …decode + write… */ }
 catch (e) { logger.warn(`解密失败 ${relativePath}: ${e.message}`); failed++; }
 ```
 
-**Step 4: Convert engine3x.js**
+**Step 4: 转换 engine3x.js**
 
-Mechanical replacements (preserve behaviour):
+机械替换（保留行为）：
 
-| Old | New |
+| 旧 | 新 |
 |---|---|
 | `fs.readFileSync(p, enc)` | `await fsp.readFile(p, enc)` |
 | `fs.writeFileSync(p, data)` | `await fsp.writeFile(p, data)` |
 | `fs.readdirSync(p)` | `await fsp.readdir(p)` |
 | `fs.mkdirSync(p, opts)` | `await fsp.mkdir(p, opts)` |
 | `fs.copyFileSync(s, d)` | `await fsp.copyFile(s, d)` |
-| `fs.existsSync(p)` | `await pathExists(p)` (helper using `fsp.access`) |
+| `fs.existsSync(p)` | `await pathExists(p)`（使用 `fsp.access` 的辅助函数） |
 
-Add helper at top of `engine3x.js`:
+在 `engine3x.js` 顶部添加辅助：
 ```js
 const fsp = require('fs/promises');
 async function pathExists(p) {
@@ -364,22 +364,22 @@ async function pathExists(p) {
 }
 ```
 
-Walk through `engine3x.js` line by line; every async function already exists so no signature changes. Audit at the end with grep.
+逐行走读 `engine3x.js`；所有异步函数已存在，因此签名无需变更。最后用 grep 审计。
 
-Run: `grep -n 'fs\.\(read\|write\|stat\|readdir\|mkdir\|copyFile\|exists\|rm\|unlink\)Sync' src/core/cocos3x/engine3x.js src/core/jscDecryptor.js`
-Expected: empty.
+执行：`grep -n 'fs\.\(read\|write\|stat\|readdir\|mkdir\|copyFile\|exists\|rm\|unlink\)Sync' src/core/cocos3x/engine3x.js src/core/jscDecryptor.js`
+预期：空。
 
-**Step 5: Run guard test**
+**Step 5: 运行守卫测试**
 
-Run: `npm test -- asyncIo`
-Expected: 2 passed.
+执行：`npm test -- asyncIo`
+预期：2 passed。
 
-**Step 6: Run full suite (regression check)**
+**Step 6: 运行完整测试套（回归检查）**
 
-Run: `npm test`
-Expected: all green. If integration with zqndtz has been wired by now, also `npm run e2e -- zqndtz`.
+执行：`npm test`
+预期：全绿。如果 zqndtz 集成已接好，再运行 `npm run e2e -- zqndtz`。
 
-**Step 7: Commit**
+**Step 7: 提交**
 
 ```bash
 git add src/core/jscDecryptor.js src/core/cocos3x/engine3x.js test/unit/asyncIo.guard.test.js
@@ -391,18 +391,18 @@ git commit -m "refactor(3x): replace sync fs calls with fs/promises (R3)
 
 ---
 
-## Task 3: R4 — Per-asset error isolation
+## Task 3: R4 — 逐资源错误隔离
 
-**Files:**
-- Modify: `src/core/cocos3x/engine3x.js` (around `unpackBundle` / `unpackAsset`)
-- Create: `src/core/cocos3x/recoveryReport.js`
-- Create: `test/unit/recoveryReport.test.js`
+**文件:**
+- 修改: `src/core/cocos3x/engine3x.js`（`unpackBundle` / `unpackAsset` 周围）
+- 创建: `src/core/cocos3x/recoveryReport.js`
+- 创建: `test/unit/recoveryReport.test.js`
 
-### Subtask 3.1: RecoveryReport collector
+### Subtask 3.1: RecoveryReport 收集器
 
-**Step 1: Write tests**
+**Step 1: 编写测试**
 
-`test/unit/recoveryReport.test.js`:
+`test/unit/recoveryReport.test.js`：
 ```js
 const { describe, it, expect } = require('vitest');
 const { RecoveryReport } = require('../../src/core/cocos3x/recoveryReport');
@@ -430,14 +430,14 @@ describe('RecoveryReport', () => {
 });
 ```
 
-**Step 2: Run, expect failure**
+**Step 2: 运行，预期失败**
 
-Run: `npm test -- recoveryReport`
-Expected: import fails.
+执行：`npm test -- recoveryReport`
+预期：import 失败。
 
-**Step 3: Implement**
+**Step 3: 实现**
 
-`src/core/cocos3x/recoveryReport.js`:
+`src/core/cocos3x/recoveryReport.js`：
 ```js
 class RecoveryReport {
   constructor() {
@@ -474,16 +474,16 @@ class RecoveryReport {
 module.exports = { RecoveryReport };
 ```
 
-**Step 4: Run tests**
+**Step 4: 运行测试**
 
-Run: `npm test -- recoveryReport`
-Expected: 2 passed.
+执行：`npm test -- recoveryReport`
+预期：2 passed。
 
-### Subtask 3.2: Wire RecoveryReport into engine3x
+### Subtask 3.2: 把 RecoveryReport 接入 engine3x
 
-**Step 5: Modify engine3x.js**
+**Step 5: 修改 engine3x.js**
 
-In the bundle-unpack loop (around `unpackBundle`), instantiate one `RecoveryReport` per `reverseProject3x()` call. Wrap each `unpackAsset` call site:
+在 bundle 解包循环（`unpackBundle` 周围），每次 `reverseProject3x()` 调用时实例化一个 `RecoveryReport`。包裹每个 `unpackAsset` 调用点：
 ```js
 try {
   await unpackAsset(...);
@@ -494,14 +494,14 @@ try {
 }
 ```
 
-At end of `reverseProject3x()`:
+在 `reverseProject3x()` 末尾：
 ```js
 await fsp.writeFile(path.join(outDir, 'RECOVERY_REPORT.md'), report.toMarkdown());
 ```
 
-**Step 6: Add integration test against zqndtz**
+**Step 6: 添加针对 zqndtz 的集成测试**
 
-`test/integration/recovery-report.test.js`:
+`test/integration/recovery-report.test.js`：
 ```js
 const { describe, it, expect } = require('vitest');
 const fs = require('fs');
@@ -521,12 +521,12 @@ describe.skipIf(!fs.existsSync(sample.path))('integration: RecoveryReport on zqn
 });
 ```
 
-(Test skips when sample missing → CI-safe.)
+（样本缺失时测试跳过 → CI 安全。）
 
-Run: `npm test -- recovery-report`
-Expected: 1 passed (or skipped if sample absent).
+执行：`npm test -- recovery-report`
+预期：1 passed（样本不存在时跳过）。
 
-**Step 7: Commit**
+**Step 7: 提交**
 
 ```bash
 git add src/core/cocos3x/{engine3x.js,recoveryReport.js} test/{unit,integration}/recovery*
@@ -539,17 +539,17 @@ git commit -m "feat(3x): per-asset try/catch + RecoveryReport.md (R4)
 
 ---
 
-## Task 4: Quality gates CLI scaffold (used by all later PRs)
+## Task 4: 质量门 CLI 脚手架（被所有后续 PR 使用）
 
-**Files:**
-- Create: `bin/validate.js`
-- Create: `src/validate/index.js`
-- Create: `src/validate/gates/recoveryReport.js`
-- Create: `test/unit/validate.recoveryReport.test.js`
+**文件:**
+- 创建: `bin/validate.js`
+- 创建: `src/validate/index.js`
+- 创建: `src/validate/gates/recoveryReport.js`
+- 创建: `test/unit/validate.recoveryReport.test.js`
 
-**Step 1: Write tests for the gate runner**
+**Step 1: 为 gate 运行器编写测试**
 
-`test/unit/validate.recoveryReport.test.js`:
+`test/unit/validate.recoveryReport.test.js`：
 ```js
 const { describe, it, expect } = require('vitest');
 const fs = require('fs');
@@ -570,9 +570,9 @@ describe('validate gate: recoveryReport.count-matches-fs', () => {
 });
 ```
 
-**Step 2: Implement minimal gate runner**
+**Step 2: 实现最小 gate 运行器**
 
-`src/validate/index.js`:
+`src/validate/index.js`：
 ```js
 const path = require('path');
 const recoveryReport = require('./gates/recoveryReport');
@@ -592,7 +592,7 @@ function runGates(outputDir, { gates = Object.keys(ALL) } = {}) {
 module.exports = { runGates };
 ```
 
-`src/validate/gates/recoveryReport.js`:
+`src/validate/gates/recoveryReport.js`：
 ```js
 const fs = require('fs');
 const path = require('path');
@@ -618,7 +618,7 @@ function countAssets(root) {
 }
 ```
 
-`bin/validate.js`:
+`bin/validate.js`：
 ```js
 #!/usr/bin/env node
 const { runGates } = require('../src/validate');
@@ -628,14 +628,14 @@ const r = runGates(dir);
 console.log(JSON.stringify(r, null, 2));
 process.exit(r.failed.length ? 1 : 0);
 ```
-`chmod +x bin/validate.js`.
+`chmod +x bin/validate.js`。
 
-**Step 3: Tests pass**
+**Step 3: 测试通过**
 
-Run: `npm test -- validate`
-Expected: 1 passed.
+执行：`npm test -- validate`
+预期：1 passed。
 
-**Step 4: Commit**
+**Step 4: 提交**
 
 ```bash
 git add bin/validate.js src/validate/ test/unit/validate*
@@ -646,13 +646,13 @@ PR 2-6 will plug additional gates into src/validate/gates/."
 
 ---
 
-## Task 5: PR-close — CHANGELOG, README, verification, push
+## Task 5: PR 收尾 — CHANGELOG、README、验证、推送
 
-**Files:**
-- Modify: `CHANGELOG.md` (create if missing)
-- Modify: `README.md`
+**文件:**
+- 修改: `CHANGELOG.md`（不存在则创建）
+- 修改: `README.md`
 
-**Step 1: CHANGELOG entry**
+**Step 1: CHANGELOG 条目**
 
 ```md
 ## [Unreleased]
@@ -663,11 +663,11 @@ PR 2-6 will plug additional gates into src/validate/gates/."
 - vitest test scaffold + `npm run validate` gate runner.
 ```
 
-**Step 2: README — note RECOVERY_REPORT and validate command**
+**Step 2: README — 说明 RECOVERY_REPORT 与 validate 命令**
 
-Append a "Validation" subsection under the existing "3.x reverse" docs explaining `npm run validate <dir>`.
+在现有 "3.x reverse" 文档下追加 "Validation" 子章节，解释 `npm run validate <dir>`。
 
-**Step 3: Run full local verification**
+**Step 3: 完整本地验证**
 
 ```bash
 npm test
@@ -675,23 +675,23 @@ npm run e2e -- zqndtz   # if sample present
 npm run validate <some-recent-output-dir>
 ```
 
-All must pass / report cleanly.
+全部必须通过 / 报告干净。
 
-**Step 4: Push branch**
+**Step 4: 推送分支**
 
 ```bash
 git push -u origin feature/pr1-wave0-foundation
 ```
 
-**Step 5: Open PR**
+**Step 5: 开 PR**
 
-Title: `PR 1: Wave 0 — JSC key + async IO + error isolation + test scaffold`
+标题：`PR 1: Wave 0 — JSC key + async IO + error isolation + test scaffold`
 
-Body: link the design doc section §2.2 Wave 0, list the four shipped items (R1, R3, R4, gate runner), and note that PR 2 starts in `.worktrees/pr2-wave1-3x-deserialize/` next.
+正文：链接设计文档 §2.2 Wave 0，列出已交付的四项（R1、R3、R4、gate runner），并注明 PR 2 接下来在 `.worktrees/pr2-wave1-3x-deserialize/` 启动。
 
-**Step 6: Merge & cleanup**
+**Step 6: 合并与清理**
 
-After merge:
+合并后：
 ```bash
 cd /Users/lcf/code/cc-reverse
 git fetch origin
@@ -702,9 +702,9 @@ git worktree remove .worktrees/pr1-wave0-foundation
 
 ---
 
-## Out of scope (kept honest)
+## 范围外（如实交代）
 
-- 2.x JSC key extraction enhancements — covered by next round (NEXT-ROUND-2x-backlog.md).
-- R2 settings.js eval safety — 2.x specific, deferred.
-- New CCON / IPackedFileData work — that's PR 2.
-- Script recovery — that's PR 3+.
+- 2.x JSC key 提取增强 — 由下一轮覆盖（NEXT-ROUND-2x-backlog.md）。
+- R2 settings.js eval 安全 — 2.x 特有，已推迟。
+- 新的 CCON / IPackedFileData 工作 — 那是 PR 2。
+- 脚本恢复 — 那是 PR 3+。
