@@ -21,7 +21,7 @@ async function splitChunks(chunk) {
   try {
     ast = parser.parse(source, { sourceType: 'script', allowReturnOutsideFunction: true });
   } catch (err) {
-    return [{ name, registerId: null, deps: [], setterBindings: [], ast: null, source, preminified }];
+    return [{ name, registerId: null, deps: [], setterBindings: [], exportParam: null, ast: null, source, preminified }];
   }
 
   const modules = [];
@@ -57,6 +57,12 @@ async function splitChunks(chunk) {
         .map((el) => el.value);
 
       const modName = deriveModuleName(registerId, name, modules.length);
+      // Capture the factory's first parameter name — terser/webcrack rename
+      // `_export` to a single letter (e.g. `e`, `r`). esmRebuilder needs this
+      // to recognize export calls like `e("BloomType", ...)`.
+      const exportParam = (factory.params && factory.params[0] && t.isIdentifier(factory.params[0]))
+        ? factory.params[0].name
+        : null;
       const result = extractFactoryBody(factory);
       const setterBindings = result.setterBindings.map((s) => ({
         dep: deps[s._index],
@@ -67,6 +73,7 @@ async function splitChunks(chunk) {
         registerId,
         deps,
         setterBindings,
+        exportParam,
         ast: result.bodyAst,
         source,
         preminified,
@@ -76,7 +83,7 @@ async function splitChunks(chunk) {
   });
 
   if (modules.length === 0) {
-    return [{ name, registerId: null, deps: [], setterBindings: [], ast: null, source, preminified }];
+    return [{ name, registerId: null, deps: [], setterBindings: [], exportParam: null, ast: null, source, preminified }];
   }
   return modules;
 }
