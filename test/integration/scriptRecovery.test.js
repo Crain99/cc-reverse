@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, writeFile, readFile, access } from 'node:fs/promises';
 import { recoverScriptsLayered } from '../../src/core/cocos3x/engine3x.js';
 
 describe('Layered script recovery (integration)', () => {
-  it('emits one .js per System.register module under assets/scripts/<chunkBase>/', async () => {
+  it('emits one .js per System.register module under _runtime/scripts/<chunkBase>/', async () => {
     const tmp = await mkdtemp(path.join(os.tmpdir(), 'cc3x-scripts-'));
     const srcChunks = path.join(tmp, 'src', 'chunks');
     const out = path.join(tmp, 'out');
@@ -26,9 +26,12 @@ describe('Layered script recovery (integration)', () => {
 
     const result = await recoverScriptsLayered(tmp, out, false);
     expect(result.modulesEmitted).toBe(2);
-    await access(path.join(out, 'assets', 'scripts', 'index', 'A.js'));
-    await access(path.join(out, 'assets', 'scripts', 'index', 'B.js'));
-    const aSrc = await readFile(path.join(out, 'assets', 'scripts', 'index', 'A.js'), 'utf8');
+    // Layered raw .js output lives under _runtime/ — these still carry
+    // System.register / __unresolved_N placeholders that crash the editor's
+    // ccclass scanner, so they must NOT sit under assets/.
+    await access(path.join(out, '_runtime', 'scripts', 'index', 'A.js'));
+    await access(path.join(out, '_runtime', 'scripts', 'index', 'B.js'));
+    const aSrc = await readFile(path.join(out, '_runtime', 'scripts', 'index', 'A.js'), 'utf8');
     expect(aSrc).toMatch(/import\s*\{\s*Component\s*\}\s*from\s*['"]cc['"]/);
   });
 
@@ -64,7 +67,7 @@ describe('Layered script recovery (integration)', () => {
     expect(result.tsFilesEmitted).toBeGreaterThanOrEqual(1);
     await access(path.join(out, 'assets', 'scripts', 'tsconfig.json'));
     await access(path.join(out, 'assets', 'scripts', 'RECOVERY_INDEX.json'));
-    // Legacy .js coexists.
-    await access(path.join(out, 'assets', 'scripts', 'index', 'Player.js'));
+    // Legacy .js coexists — under _runtime/ now (see comment above).
+    await access(path.join(out, '_runtime', 'scripts', 'index', 'Player.js'));
   });
 });

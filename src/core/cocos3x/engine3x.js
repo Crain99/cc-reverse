@@ -522,11 +522,17 @@ async function unpackBundle({ bundleDir, cfg: prebuiltCfg, cfgPath: prebuiltCfgP
   await copyFile(cfgPath, path.join(bundleOut, 'config.original.json'));
 
   // Preserve the bundle's compiled user-script bundle (2.4+ ships this as
-  // <bundle>/game.js or <bundle>/index.js). 5MB+ on a real project.
+  // <bundle>/game.js or <bundle>/index.js). These are SystemJS megabundles
+  // referencing engine internals (e.g. ../libs/um.js) — placing them inside
+  // assets/<bundle>/ makes the editor try to evaluate them, which fails with
+  // "Module ../libs/um.js not found" or "__unresolved_N" SystemJS errors.
+  // They go under _runtime/bundle-scripts/<bundle>/ for analysis only.
+  const bundleScriptsOut = path.join(outputPath, '_runtime', 'bundle-scripts', cfg.name);
   for (const scriptName of ['game.js', 'index.js']) {
     const src = path.join(bundleDir, scriptName);
     if (await pathExists(src)) {
-      await copyFile(src, path.join(bundleOut, scriptName));
+      await mkdir(bundleScriptsOut, { recursive: true });
+      await copyFile(src, path.join(bundleScriptsOut, scriptName));
       result.scriptBundle = scriptName;
     }
   }
@@ -938,7 +944,7 @@ function inferMetaExt(className) {
   // The meta extension mirrors the asset file extension. When the asset is
   // native-only (texture/audio/font), the meta sits next to the native file.
   switch (className) {
-    case 'cc.SceneAsset':    return '.fire';  // 2.4 convention; 3.x editor also reads .fire
+    case 'cc.SceneAsset':    return '.scene'; // 3.x convention; editor's scene importer keys off .scene
     case 'cc.Prefab':        return '.prefab';
     case 'cc.EffectAsset':   return '.effect';
     case 'cc.Material':      return '.mtl';
@@ -955,7 +961,7 @@ function inferMetaExt(className) {
 
 function inferImportExt(className) {
   switch (className) {
-    case 'cc.SceneAsset':    return '.fire';
+    case 'cc.SceneAsset':    return '.scene';
     case 'cc.Prefab':        return '.prefab';
     case 'cc.EffectAsset':   return '.effect';
     case 'cc.Material':      return '.mtl';
@@ -1040,15 +1046,17 @@ async function recoverScripts(sourcePath, outputPath, verbose, scriptOptions = {
   }
 
   // Recursive walk of src/assets/ (WeChat mini-game "_plugs" / plugin SDKs
-  // live here as compiled .js files).
+  // live here as compiled .js files). These are NOT user scripts — they are
+  // compiled vendor libs that often pull in engine internals or expose
+  // ccclass-decorated globals; placing them under assets/Scripts/ trips the
+  // editor's ccclass scanner. Routed to _runtime/scripts/plugs/ instead.
   const srcAssets = path.join(sourcePath, 'src', 'assets');
   if (await pathExists(srcAssets)) {
     for await (const file of walkJsFiles(srcAssets)) {
       const rel = path.relative(srcAssets, file);
-      const dest = path.join(scriptsOut, 'plugs', rel);
+      const dest = path.join(runtimeOut, 'scripts', 'plugs', rel);
       await mkdir(path.dirname(dest), { recursive: true });
       await copyFile(file, dest);
-      await writeScriptMeta(dest);
       total += 1;
     }
   }
@@ -1136,13 +1144,18 @@ async function recoverScriptsLayered(sourcePath, outputPath, verbose, options = 
     }
   }
 
-  // Legacy .js output (PR 3 path) remains for parity until PR 5 retires it.
+  // Legacy .js output (PR 3 path) — kept for analysis, but routed under
+  // _runtime/scripts/<bundle>/ rather than assets/scripts/. These are the raw
+  // post-Layer-3 SystemJS modules, which still carry `__unresolved_N` bare
+  // specifier placeholders and `System.register` calls; the editor crashes
+  // when it tries to evaluate them as ccclass scripts. The Layer-6 .ts output
+  // (above) is the editor-facing artefact.
   let totalEmitted = 0;
   for (const m of allModules) {
     if (!m.ast) continue;
     try {
       const code = generate(m.ast, { compact: false }).code;
-      const outDir = path.join(outputPath, 'assets', 'scripts', m.bundle);
+      const outDir = path.join(outputPath, '_runtime', 'scripts', m.bundle);
       await mkdir(outDir, { recursive: true });
       await writeFile(path.join(outDir, `${m.name}.js`), code);
       if (verbose) logger.debug(`LayeredScript: ${m.bundle}/${m.name}.js`);
@@ -1207,6 +1220,10 @@ async function writeProjectDescriptor(outputPath, settings, sourceProjectName) {
   await writeCocos3xProject(outputPath, {
     projectName: sourceProjectName,
     settings: settings || {},
+    // Let projectScaffold.pickCocosVersion read settings.CocosEngine /
+    // engineVersion / creator.version. The hardcoded fallback inside
+    // writeCocos3xProject is a last resort and produces a Dashboard-blocking
+    // version mismatch when the user's editor is on a newer 3.8.x patch.
   });
 }
 
