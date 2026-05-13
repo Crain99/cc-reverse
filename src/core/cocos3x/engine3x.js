@@ -1147,6 +1147,40 @@ async function recoverScriptsLayered(sourcePath, outputPath, verbose, options = 
 
   if (chunks.length === 0) return { modulesEmitted: 0, tsFilesEmitted: 0, errors: [] };
 
+  // Pre-pass: run webcrack(unminify) ONCE per chunk to collapse __extends /
+  // __decorate before splitting. Doing this per-module inside classRestorer
+  // costs ~870 ms × N (slgq: 974 modules → 14 min). One whole-chunk call
+  // takes ~38 s and produces equivalent output (no leftover __extends or
+  // __decorate). Modules carry `preminified: true` so classRestorer skips
+  // its own webcrack hop. On webcrack failure we leave the chunk untouched
+  // and fall back to per-module unminify.
+  let webcrackFn = null;
+  try {
+    ({ webcrack: webcrackFn } = require('webcrack'));
+  } catch {
+    try {
+      const mod = await import('webcrack');
+      webcrackFn = mod.webcrack || (mod.default && mod.default.webcrack);
+    } catch { /* webcrack unavailable; per-module path will run as before */ }
+  }
+  if (typeof webcrackFn === 'function') {
+    for (const chunk of chunks) {
+      try {
+        const r = await webcrackFn(chunk.source, {
+          jsx: false,
+          mangle: false,
+          unminify: true,
+          deobfuscate: false,
+          unpack: false,
+        });
+        chunk.source = r.code;
+        chunk.preminified = true;
+      } catch (err) {
+        if (verbose) logger.debug(`webcrack pre-pass failed on ${chunk.name}: ${err.message}`);
+      }
+    }
+  }
+
   const scenes = await collectRecoveredScenes(outputPath);
 
   const allErrors = [];

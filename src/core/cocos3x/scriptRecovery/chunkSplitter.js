@@ -16,12 +16,12 @@ const t = require('@babel/types');
  *  - source: the original chunk text (kept as fallback)
  */
 async function splitChunks(chunk) {
-  const { name, source } = chunk;
+  const { name, source, preminified = false } = chunk;
   let ast;
   try {
     ast = parser.parse(source, { sourceType: 'script', allowReturnOutsideFunction: true });
   } catch (err) {
-    return [{ name, registerId: null, deps: [], setterBindings: [], ast: null, source }];
+    return [{ name, registerId: null, deps: [], setterBindings: [], ast: null, source, preminified }];
   }
 
   const modules = [];
@@ -69,13 +69,14 @@ async function splitChunks(chunk) {
         setterBindings,
         ast: result.bodyAst,
         source,
+        preminified,
       });
       p.skip();
     },
   });
 
   if (modules.length === 0) {
-    return [{ name, registerId: null, deps: [], setterBindings: [], ast: null, source }];
+    return [{ name, registerId: null, deps: [], setterBindings: [], ast: null, source, preminified }];
   }
   return modules;
 }
