@@ -16,12 +16,16 @@
 
 本轮非目标：
 - 2.x 改进（下一轮复用本轮基础设施）。
-- 在没有 sourcemap 的情况下恢复混淆变量名（Layer 7 humanify 是可选项，发布时不预配置）。
+- 在没有 sourcemap 的情况下恢复混淆变量名（humanify 是 opt-in CLI 子命令，发布时不预配置）。
 - 原生二进制解包（.so / .dll 脚本提取）。
 
 ## 2. 架构概览
 
-### 2.1 脚本恢复 — 7 层
+### 2.1 脚本恢复 — 6 in-memory layer + 1 opt-in CLI 子命令
+
+> 实际架构：脚本恢复管线是 **6 个 in-memory AST layer**(Layer 1-5 都只在 AST 内传递,**只有 Layer 6 落盘**到 `<out>/assets/scripts/`);而 humanify 是**独立的 opt-in CLI 子命令**(`cc-reverse humanify <outDir>`),不会被 `cc-reverse reverse` 主管线自动触发,需要用户在恢复完成后显式调用。下方树形图中的 Layer 7 仅为示意 humanify 与管线的衔接关系,**它本身不是 in-memory 管线的一层**。
+>
+> 参考 cocos-reverse-engineering-skill `references/output-layers.md` 已正确描述该分层。
 
 `src/core/cocos3x/scriptRecovery/` 下的新模块树：
 
@@ -38,22 +42,22 @@ src/chunks/*.js  ────────┐
                           ▼
   Layer 5  typeInferer        scan .scene/.prefab → infer field types
                           ▼
-  Layer 6  tsProjectEmitter   ts-morph + prettier → assets/scripts/<bundle>/<module>.ts + tsconfig
-                          ▼
-  Layer 7  humanify           [opt-in] minified-name renaming via humanify CLI
+  Layer 6  tsProjectEmitter   ts-morph + prettier → assets/scripts/<bundle>/<module>.ts + tsconfig   ← 唯一落盘的层
+                          ▼  （以下为带外步骤，需用户显式调用 `cc-reverse humanify`，非 in-memory 管线的一层）
+  [opt-in CLI] humanify       minified-name renaming via humanify CLI
 ```
 
-每一层：
+每一层(指 Layer 1-6)：
 - 接收并返回 Babel AST（层间不重新解析）。
 - Fail closed：某层崩溃 → 下游使用上游输出 → 最坏情况退化为当前行为（原始 chunk 拷贝）。
-- 可通过 `--script-layers <1-7>` 切换。
+- 可通过 `--script-layers <1-6>` 切换。
 
 我们依赖的外部工具（避免重复造轮子）：
 - `webcrack` — 驱动 Layer 1 + Layer 2 大部分 + Layer 3 的 `__extends` 还原。
 - `@babel/*` — 项目已有依赖，用于 Cocos 特定的 AST。
 - `ts-morph` — Layer 6 的 TS 输出（处理 TS 装饰器比 Babel 更干净）。
 - `prettier` — 最终格式化。
-- `humanify`（local 模式）— Layer 7，可选，用户单独安装。文档同时说明通过 `copilot-api` 走 GitHub Copilot 路径作为用户自担风险的选项（参见 §6）。
+- `humanify`（local 模式）— opt-in CLI 子命令(`cc-reverse humanify <outDir>`,带外,不属于 6 层 in-memory 管线),用户单独安装。文档同时说明通过 `copilot-api` 走 GitHub Copilot 路径作为用户自担风险的选项（参见 §6）。
 
 ### 2.2 资源管线 — Wave 0/1/2/3
 
@@ -96,7 +100,7 @@ PR 1: Wave 0 (R1, R3, R4)                       ~400 LOC
 PR 2: Wave 1 (R5–R8)                            ~1200 LOC
 PR 3: Script Layer 1–3 (webcrack integration)   ~400 LOC
 PR 4: Script Layer 4–6 (cocos + type inference) ~1000 LOC
-PR 5: Wave 2 (R9–R12) + Layer 7                 ~800 LOC
+PR 5: Wave 2 (R9–R12) + humanify CLI 子命令       ~800 LOC
 PR 6: Wave 3 (R14–R16)                          ~600 LOC
 PR 7: skill methodology A–F (separate repo)     6 docs + SKILL.md refactor
 ```
@@ -114,7 +118,7 @@ Phase 2  detect-project       [—]   unchanged
 Phase 3  decrypt-jsc          [—]   unchanged (uses PR1 R1 hardening)
 Phase 4  triage               [E]   pick scope (assets-only / scripts-only / target system)
 Phase 5  unpack               [—]   unchanged invocation; output now multi-layered
-Phase 6  navigate-output      [A]   how to read the 7-layer script tree
+Phase 6  navigate-output      [A]   how to read the layered script tree (6 in-memory layers; only Layer 6 is on disk under `<out>/assets/scripts/`)
 Phase 7  validate-recovery    [B]   5 quality gates run via `cc-reverse validate`
 Phase 8  analyze-recovered    [D]   how to read recovered code; SDK fingerprint library
         recovery-decisions    [C]   decision tree referenced from any failing phase
@@ -202,7 +206,7 @@ Golden 样本（在外部 `~/code/cc-reverse-fixtures/` 管理，不入库）：
 - **Worktree 拓扑**：PR 3-5 堆叠；PR 1、2、6 独立。
 - **SDK fingerprint 库**：覆盖国内 + 海外 SDK。
 - **方法论范围**：完整 A–F。
-- **脚本恢复层数**：7（原为 6 — 在 Copilot 讨论后将 Layer 7 humanify 加回）。
+- **脚本恢复层数**：6 个 in-memory AST layer(只有 Layer 6 落盘) + 1 个独立的 opt-in `cc-reverse humanify` CLI 子命令(带外步骤,非管线一层 — 在 Copilot 讨论后将 humanify 作为 CLI 子命令而非 in-memory 层加回)。
 
 ### 风险
 

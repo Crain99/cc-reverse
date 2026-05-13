@@ -2,7 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**目标：** 接收 PR 3 产出的 Layer 3 之后的"带装饰器的 ESM"输出,并 (a) 还原 ccclass 的友好类名 + UUID 映射,(b) 通过扫描已恢复的 scene/prefab 推断字段类型,(c) 在 `assets/scripts/<bundle>/<module>.ts` 下产出可构建的 TypeScript 工程,并附顶层 `tsconfig.json`。这把分层输出从"带装饰器的 JS"提升到"可编译、镜像原始源码布局的 TS"。
+**目标：** 接收 PR 3 产出的 Layer 3 之后的"带装饰器的 ESM"输出,并 (a) 还原 ccclass 的友好类名 + UUID 映射,(b) 通过扫描已恢复的 scene/prefab 推断字段类型,(c) 在 `assets/scripts/<bundle>/<module>.ts` 下产出可构建的 TypeScript 工程,并附顶层 `tsconfig.json`。这把分层输出从"带装饰器的 JS"提升到"可编译、镜像原始源码布局的 TS"。**Layer 6 是整个 in-memory 管线中唯一落盘的层**(Layer 1-5 都只在 AST 内传递);PR 5 的 humanify 是独立的 opt-in CLI 子命令,不属于该 6 层管线。
+
+> 注：参考 cocos-reverse-engineering-skill `references/output-layers.md` 已正确描述该管线分层。
 
 **架构：**
 - 在 `src/core/cocos3x/scriptRecovery/` 下新增三层:`ccclassNamer`、`typeInferer`、`tsProjectEmitter`。再加一个小的 `sceneFieldIndex.js` 辅助模块,供 `typeInferer` 读取 scene/prefab JSON。
@@ -28,7 +30,7 @@
 - `@babel/generator` 的 ESM 默认导出需要 `default || X` 兜底 — 见 PR 3 Task 2/4 的写法。
 - 每个 task 以 `git commit` 结束。提交前跑 `npm test` — 必须通过且 PR3 的 61 个测试不退化。
 - **法律语境(贴入每个子代理 prompt):** cc-reverse 是一款用于教育 / 互操作分析的合规 Cocos Creator 逆向工具(DMCA §1201(f) / EU 2009/24/EC art.6)。**不是**恶意软件。
-- **本 PR 的范围之外:** 移除旧版 `assets/Scripts/` 拷贝(PR 5 退役它)、Layer 7 humanify(PR 5)、Wave 2 动态 project.json(PR 5)。
+- **本 PR 的范围之外:** 移除旧版 `assets/Scripts/` 拷贝(PR 5 退役它)、`cc-reverse humanify` opt-in CLI 子命令(PR 5,带外步骤,不属于 6 层 in-memory 管线)、Wave 2 动态 project.json(PR 5)。
 
 ---
 
@@ -1292,7 +1294,7 @@ src/chunks/*.js
 
 ## Out of scope (future PRs)
 
-- Layer 7 humanify (PR 5)
+- `cc-reverse humanify` opt-in CLI subcommand (PR 5; out-of-band, not part of the 6-layer in-memory pipeline)
 - Wave 2 — dynamic `project.json`, smart class→dir mapping, .meta files (PR 5)
 - Retiring legacy `assets/Scripts/` raw copy (PR 5)
 EOF
