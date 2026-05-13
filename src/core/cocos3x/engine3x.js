@@ -1105,16 +1105,46 @@ async function recoverScripts(sourcePath, outputPath, verbose, scriptOptions = {
  */
 async function recoverScriptsLayered(sourcePath, outputPath, verbose, options = {}) {
   const scriptLayers = options.scriptLayers != null ? options.scriptLayers : 6;
-  const chunksDir = path.join(sourcePath, 'src', 'chunks');
-  if (!(await pathExists(chunksDir))) return { modulesEmitted: 0, tsFilesEmitted: 0, errors: [] };
-  const entries = await readdir(chunksDir);
   const chunks = [];
-  for (const entry of entries) {
-    if (!entry.endsWith('.js')) continue;
-    const full = path.join(chunksDir, entry);
-    const source = await readFile(full, 'utf8');
-    chunks.push({ name: entry, source });
+
+  // Source A: src/chunks/*.js — the canonical 3.x web build layout. Each file
+  // is one or more `System.register(...)` modules.
+  const chunksDir = path.join(sourcePath, 'src', 'chunks');
+  if (await pathExists(chunksDir)) {
+    const entries = await readdir(chunksDir);
+    for (const entry of entries) {
+      if (!entry.endsWith('.js')) continue;
+      const full = path.join(chunksDir, entry);
+      const source = await readFile(full, 'utf8');
+      // bundle name = chunk basename so .ts lands under assets/scripts/<chunk>/
+      chunks.push({ name: entry, source, bundle: entry.replace(/\.js$/, '') });
+    }
   }
+
+  // Source B: subpackages/<bundle>/{game,index}.js — the WeChat/Bilibili
+  // mini-game layout (slgq is shipped this way). Hundreds of ccclass
+  // System.register calls live here. Without this, splitter sees zero
+  // modules even when the build has 970+ ccclasses, and game.scene
+  // `__type__` refs all fall back to UnknownNode (the brown screen).
+  const subRoot = path.join(sourcePath, 'subpackages');
+  if (await pathExists(subRoot)) {
+    const subDirs = await readdir(subRoot, { withFileTypes: true });
+    for (const d of subDirs) {
+      if (!d.isDirectory()) continue;
+      for (const scriptName of ['game.js', 'index.js']) {
+        const full = path.join(subRoot, d.name, scriptName);
+        if (!(await pathExists(full))) continue;
+        const source = await readFile(full, 'utf8');
+        chunks.push({
+          name: `${d.name}__${scriptName}`,
+          source,
+          bundle: d.name, // align with bundle dir under assets/<bundle>/
+        });
+        break; // prefer game.js over index.js, as the unpacker does
+      }
+    }
+  }
+
   if (chunks.length === 0) return { modulesEmitted: 0, tsFilesEmitted: 0, errors: [] };
 
   const scenes = await collectRecoveredScenes(outputPath);
@@ -1122,7 +1152,7 @@ async function recoverScriptsLayered(sourcePath, outputPath, verbose, options = 
   const allErrors = [];
   let allModules = [];
   for (const chunk of chunks) {
-    const baseName = chunk.name.replace(/\.js$/, '');
+    const baseName = chunk.bundle || chunk.name.replace(/\.js$/, '');
     const { modules, errors } = await runScriptRecoveryPipeline({
       chunks: [chunk],
       context: { scenes, bundle: baseName },

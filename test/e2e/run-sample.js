@@ -13,7 +13,11 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'cc-reverse.js');
 
 function run(args, opts = {}) {
-  const r = spawnSync(process.execPath, [CLI, ...args], {
+  // Mini-game samples (e.g. slgq) ship 970+ ccclass modules; ts-morph +
+  // prettier on the full set comfortably exceeds the default 4 GiB heap.
+  // Bump the child to 8 GiB so the e2e harness can actually run the
+  // pipeline that ships in production CLI use.
+  const r = spawnSync(process.execPath, ['--max-old-space-size=8192', CLI, ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
