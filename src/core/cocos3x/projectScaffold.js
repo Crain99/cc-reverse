@@ -193,11 +193,36 @@ async function writeCocos3xProject(outputPath, opts = {}) {
 
   await mkdir(outputPath, { recursive: true });
 
+  const projectId = uuidUtils.generateUuid();
+  const safePkgName = projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'recovered-project';
+
+  // Cocos Creator 3.8 stores the project identity in package.json (verified
+  // against cocos/cocos-test-projects v3.8.7/package.json). Required keys:
+  // name, type ('3d' | '2d'), uuid, version, creator.version. Dashboard reads
+  // this when listing projects; missing `uuid` triggers "Invalid project".
+  const pkgJson = {
+    name: safePkgName,
+    type: '3d',
+    uuid: projectId,
+    version: cocosVersion,
+    creator: {
+      version: cocosVersion,
+      dependencies: {},
+    },
+    description: 'Recovered by cc-reverse',
+  };
+  await writeFile(
+    path.join(outputPath, 'package.json'),
+    JSON.stringify(pkgJson, null, 2),
+  );
+
+  // project.json kept as a thin compatibility marker for the legacy 2.x-style
+  // detection paths in this codebase (and any external tooling that grew up
+  // reading it). 3.8 itself ignores this file but seeding it keeps existing
+  // tests + the older `creator.version` consumer happy.
   const projectJson = {
     name: projectName,
     version: cocosVersion,
-    engine: 'cocos-creator',
-    packages: ['assets'],
     creator: { version: cocosVersion },
     recoveredBy: 'cc-reverse',
   };
@@ -206,21 +231,35 @@ async function writeCocos3xProject(outputPath, opts = {}) {
     JSON.stringify(projectJson, null, 2),
   );
 
-  const safePkgName = projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'recovered-project';
-  const pkgJson = {
-    name: safePkgName,
-    version: '1.0.0',
-    description: 'Recovered by cc-reverse',
-    creator: { version: cocosVersion },
-    dependencies: {},
+  // Cocos 3.8 reads project settings from settings/v2/packages/project.json
+  // (verified against cocos/cocos-test-projects v3.8.7). The legacy
+  // settings/project.json is kept as a 2.x-compatibility shim; 3.8 itself
+  // doesn't read it but our own tests + any 2.x-aware tooling rely on it.
+  const settingsV2Dir = path.join(outputPath, 'settings', 'v2', 'packages');
+  await mkdir(settingsV2Dir, { recursive: true });
+  const v2Project = {
+    general: {
+      designResolution: {
+        width: design.width,
+        height: design.height,
+        fitWidth: true,
+        fitHeight: true,
+      },
+    },
+    version: '1.0.6',
+    layers: [],
+    sortingLayers: { layers: [{ id: 0, name: 'default' }], nextLayerId: 1 },
+    customJointTextureLayouts: [],
   };
   await writeFile(
-    path.join(outputPath, 'package.json'),
-    JSON.stringify(pkgJson, null, 2),
+    path.join(settingsV2Dir, 'project.json'),
+    JSON.stringify(v2Project, null, 2),
   );
 
   const settingsDir = path.join(outputPath, 'settings');
-  await mkdir(settingsDir, { recursive: true });
+  // Legacy settings/project.json — flat 2.x keys preserved for back-compat
+  // tests and tooling. Cocos 3.8 ignores this file at runtime; the real
+  // settings live in settings/v2/packages/project.json above.
   const settingsProject = {
     'engine-version': cocosVersion,
     'design-resolution-width': design.width,
@@ -235,6 +274,18 @@ async function writeCocos3xProject(outputPath, opts = {}) {
     path.join(settingsDir, 'project.json'),
     JSON.stringify(settingsProject, null, 2),
   );
+
+  // Empty extensions/ keeps the Dashboard project picker quiet.
+  await mkdir(path.join(outputPath, 'extensions'), { recursive: true });
+
+  // .gitignore — standard 3.x ignores so editor-generated dirs don't pollute.
+  await writeFile(
+    path.join(outputPath, '.gitignore'),
+    ['library/', 'local/', 'temp/', 'build/', 'profiles/', 'native/',
+     'node_modules/', '*.log', '.DS_Store'].join('\n') + '\n',
+  );
+
+  return { projectJson, pkgJson, settingsProject, v2Project };
 }
 
 function pickCocosVersion(settings) {
