@@ -39,11 +39,17 @@ async function emitTsProject(modules, context = {}) {
     return { filesEmitted: 0, errors };
   }
 
-  if (!tsMorph) tsMorph = require('ts-morph');
-  if (!prettier) prettier = require('prettier');
-
-  // Instantiate ts-morph Project ONCE per emit call (it's heavy).
-  const project = new tsMorph.Project({ useInMemoryFileSystem: true });
+  // ts-morph + prettier are heavy: each createSourceFile + getFullText pair
+  // burns ~50 ms even on a no-op annotate, and prettier.format adds another
+  // 80-150 ms. On slgq (~970 modules) prettier alone pushes a single emit
+  // run from ~3.5 min to ~20 min. We now lazy-init ts-morph and skip both
+  // passes for any module that has no fieldTypes to apply (the common case
+  // in mini-game bundles where the type-inferer didn't find scene-driven
+  // bindings). Prettier is OFF by default for the same reason — set
+  // CC_REVERSE_TS_FORMAT=1 to opt back in for prettier-formatted output
+  // (useful when the recovered TS will be hand-edited).
+  const wantFormat = process.env.CC_REVERSE_TS_FORMAT === '1';
+  let project = null;
   const recoveryIndex = {};
   let count = 0;
 
@@ -61,27 +67,37 @@ async function emitTsProject(modules, context = {}) {
       continue;
     }
 
-    let sourceFile;
-    try {
-      sourceFile = project.createSourceFile(relPath, jsCode, { overwrite: true });
-    } catch (err) {
-      errors.push(`${mod.name}: ts-morph createSourceFile failed — ${err.message}`);
-      continue;
+    let text = jsCode;
+    const needsAnnotate = mod.fieldTypes && Object.keys(mod.fieldTypes).length > 0;
+
+    if (needsAnnotate) {
+      if (!tsMorph) tsMorph = require('ts-morph');
+      if (!project) project = new tsMorph.Project({ useInMemoryFileSystem: true });
+      let sourceFile;
+      try {
+        sourceFile = project.createSourceFile(relPath, jsCode, { overwrite: true });
+      } catch (err) {
+        errors.push(`${mod.name}: ts-morph createSourceFile failed — ${err.message}`);
+      }
+      if (sourceFile) {
+        try {
+          annotateFields(sourceFile, mod);
+        } catch (err) {
+          errors.push(`${mod.name}: annotate failed — ${err.message}`);
+          // continue — annotations are best-effort
+        }
+        text = sourceFile.getFullText();
+      }
     }
 
-    try {
-      annotateFields(sourceFile, mod);
-    } catch (err) {
-      errors.push(`${mod.name}: annotate failed — ${err.message}`);
-      // continue — annotations are best-effort
-    }
-
-    let text = sourceFile.getFullText();
-    try {
-      text = await prettier.format(text, { parser: 'typescript', singleQuote: true });
-    } catch (err) {
-      errors.push(`${mod.name}: prettier format failed — ${err.message}`);
-      // keep unformatted text
+    if (wantFormat) {
+      if (!prettier) prettier = require('prettier');
+      try {
+        text = await prettier.format(text, { parser: 'typescript', singleQuote: true });
+      } catch (err) {
+        errors.push(`${mod.name}: prettier format failed — ${err.message}`);
+        // keep unformatted text
+      }
     }
 
     try {
