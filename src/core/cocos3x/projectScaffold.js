@@ -290,6 +290,9 @@ async function writeCocos3xProject(outputPath, opts = {}) {
 
 function pickCocosVersion(settings) {
   if (!settings) return null;
+  // CocosEngine is the canonical key in 3.x src/settings.json (verified on
+  // wechatgame builds shipped from Creator 3.8). Older keys kept as fallback.
+  if (typeof settings.CocosEngine === 'string') return settings.CocosEngine;
   if (typeof settings.engineVersion === 'string') return settings.engineVersion;
   if (settings.creator && typeof settings.creator.version === 'string') return settings.creator.version;
   if (typeof settings.version === 'string' && /^3\./.test(settings.version)) return settings.version;
