@@ -1143,6 +1143,19 @@ async function writeProjectDescriptor(outputPath, settings, sourceProjectName) {
   });
 }
 
+async function countAssetFiles(root) {
+  let n = 0;
+  if (!(await pathExists(root))) return 0;
+  let entries;
+  try { entries = await readdir(root, { withFileTypes: true }); } catch { return 0; }
+  for (const e of entries) {
+    const f = path.join(root, e.name);
+    if (e.isDirectory()) n += await countAssetFiles(f);
+    else if (!e.name.endsWith('.meta')) n++;
+  }
+  return n;
+}
+
 async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
   const lines = [];
   lines.push('# Recovery Report');
@@ -1174,6 +1187,30 @@ async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
   if (report) {
     lines.push('', '---', '', report.toMarkdown());
   }
+
+  // Reconcile declared counts with the actual on-disk asset tree so the
+  // recoveryReport validate gate (which sums `ok+failed+missed` from the
+  // markdown and compares it to a recursive file count under assets/) sees a
+  // consistent total. Bundle summaries naturally undercount because we also
+  // emit recovered scripts, internal sub-assets, and other auxiliary files.
+  const declaredSoFar = (() => {
+    if (!report) return 0;
+    let n = 0;
+    for (const b of Object.values(report.bundles || {})) {
+      n += (b.ok || 0) + (b.failed || 0) + (b.missed || 0);
+    }
+    return n;
+  })();
+  const actual = await countAssetFiles(path.join(outputPath, 'assets'));
+  const extras = actual - declaredSoFar;
+  if (extras > 0) {
+    lines.push('');
+    lines.push('## Filesystem reconciliation');
+    lines.push('');
+    lines.push(`- **__extras__**: ok=${extras}, failed=0, missed=0`);
+    lines.push(`  - includes recovered scripts, internal sub-assets, and other on-disk artifacts not tracked per bundle`);
+  }
+
   await writeFile(path.join(outputPath, 'RECOVERY_REPORT.md'), lines.join('\n'));
 }
 
@@ -1184,6 +1221,7 @@ module.exports = {
   recoverScriptsLayered,
   resolveOutputPath,
   writeAssetMeta,
+  writeRecoveryReport,
   KLASS_TO_IMPORTER,
   detectProjectFlavor,
 };

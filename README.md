@@ -341,3 +341,30 @@ npm run validate path/to/output-dir
 - `typedArrays`：信息性通过；用于验证 TypedArray rehydrate 路径是否被触发。
 
 unpack 还会输出 `RECOVERY_REPORT.md`，列出每个 bundle 的 ok / failed / missed 计数，以及失败资源清单和原因。
+
+## Running E2E (golden samples)
+
+End-to-end tests live under `test/e2e/` and exercise the full CLI pipeline
+(`unpack` + `validate`) against three real Cocos Creator projects.
+
+**Sample path convention:** samples are expected at `~/mini/<sample>`:
+
+| Sample              | Cocos | Path                        |
+|---------------------|-------|-----------------------------|
+| slgq-reverse        | 3.x   | `~/mini/slgq-reverse`       |
+| dabaoyiqie-reverse  | 2.x   | `~/mini/dabaoyiqie-reverse` |
+| cgxfd-reverse       | 2.x   | `~/mini/cgxfd-reverse`      |
+
+These are user-local resources. Missing samples are gracefully `test.skip`'d
+so CI and other developers' machines do not break.
+
+**Run:**
+```bash
+npm run e2e
+```
+
+Each sample's combined report is written to
+`${TMPDIR}/cc-reverse-e2e/<sample>/.e2e-report.json`, plus a
+`.suggested-baseline.json` ready for human review before being committed to
+`test/baselines/<sample>/manifest.json`. See
+`docs/e2e-baseline-report-2026-05-12.md` for the first baseline run.
