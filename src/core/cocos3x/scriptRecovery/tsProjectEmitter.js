@@ -57,10 +57,37 @@ async function emitTsProject(modules, context = {}) {
   const bundlesNeedingShim = new Set();
   let count = 0;
 
+  // Pre-pass: build a (bundle, baseName) → relPath index. The original
+  // SystemJS runtime resolved cross-bundle deps via virtual ids
+  // (`chunks:///_virtual/fairygui.mjs`). After we flatten everything to
+  // `<bundle>/<fileBase>.ts`, a dep written as `"./fairygui"` from a `main/`
+  // module no longer resolves (fairygui lives under `bundle/`). We rewrite
+  // those bare relative deps to `"../<otherBundle>/<name>"` whenever a
+  // module's same-bundle lookup fails but a same-name file exists in a
+  // sibling bundle. Conservative: only acts on `./X` (not `../X`) and only
+  // when there's exactly one cross-bundle match.
+  const bundleIndex = new Map(); // bundle → Set<fileBase>
   for (const mod of modules) {
-    if (!mod || !mod.ast || !mod.ccclassName) continue;
+    if (!mod || !mod.ast) continue;
+    const fb = mod.ccclassName || mod.name;
+    if (!fb) continue;
+    const b = mod.bundle || 'unbundled';
+    if (!bundleIndex.has(b)) bundleIndex.set(b, new Set());
+    bundleIndex.get(b).add(fb);
+  }
+
+  for (const mod of modules) {
+    if (!mod || !mod.ast) continue;
     const bundle = mod.bundle || 'unbundled';
-    const relPath = `${bundle}/${mod.ccclassName}.ts`;
+    // Non-ccclass modules (vendor libs like fairygui, crypto-js, tslib that
+    // ride along in src/chunks/bundle.js) still need to be emitted — otherwise
+    // user scripts that `import "./fairygui"` fail to resolve and every
+    // aliased binding from that import becomes undefined at runtime
+    // (ReferenceError: e is not defined). Use mod.name as filename when no
+    // ccclassName was recovered.
+    const fileBase = mod.ccclassName || mod.name;
+    if (!fileBase) continue;
+    const relPath = `${bundle}/${fileBase}.ts`;
     const fsPath = path.join(outRoot, relPath);
 
     // Track shim need: any dep starting with './rollupPluginModLoBabelHelpers'
@@ -116,6 +143,10 @@ async function emitTsProject(modules, context = {}) {
       }
     }
 
+    // Cross-bundle rewrite: `from "./X"` where X isn't in this bundle but is
+    // a unique file in some other bundle → `from "../<otherBundle>/X"`.
+    text = rewriteCrossBundleImports(text, bundle, bundleIndex);
+
     try {
       await mkdir(path.dirname(fsPath), { recursive: true });
       await writeFile(fsPath, text);
@@ -124,18 +155,21 @@ async function emitTsProject(modules, context = {}) {
       continue;
     }
 
-    // Emit <ClassName>.ts.meta — uuid MUST match the chunk's _RF.push uuid so
-    // scene `__type__` references resolve when the editor scans assets/.
-    // Without this, components in game.scene fall back to UnknownNode and the
-    // canvas renders as the brown clear-color (the slgq-out symptom).
+    // Emit <fileBase>.ts.meta. For ccclass modules the uuid MUST match the
+    // chunk's _RF.push uuid so scene `__type__` references resolve. For
+    // non-ccclass vendor modules (fairygui, crypto-js, tslib, …) we derive a
+    // stable uuid from bundle+name so re-runs don't churn meta files; without
+    // a meta the editor's TS importer skips the file and `import "./X"`
+    // resolves to nothing.
+    const metaUuid = mod.uuid || stableUuid(`${bundle}:${fileBase}`);
+    const meta = buildTsMeta(metaUuid, fileBase);
+    try {
+      await writeFile(`${fsPath}.meta`, JSON.stringify(meta, null, 2) + '\n');
+    } catch (err) {
+      errors.push(`${mod.name}: meta write failed — ${err.message}`);
+    }
     if (mod.uuid) {
-      const meta = buildTsMeta(mod.uuid, mod.ccclassName);
-      try {
-        await writeFile(`${fsPath}.meta`, JSON.stringify(meta, null, 2) + '\n');
-      } catch (err) {
-        errors.push(`${mod.name}: meta write failed — ${err.message}`);
-      }
-      recoveryIndex[mod.uuid] = { path: relPath, className: mod.ccclassName };
+      recoveryIndex[mod.uuid] = { path: relPath, className: fileBase };
     }
     count += 1;
   }
@@ -173,6 +207,33 @@ async function emitTsProject(modules, context = {}) {
 function stableUuid(seed) {
   const h = crypto.createHash('sha1').update(seed).digest('hex');
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
+/**
+ * Rewrite same-directory relative imports (`from "./X"`) that don't resolve
+ * inside the current bundle but DO resolve to a unique sibling bundle. The
+ * SystemJS runtime treats deps as global virtual ids, so user code happily
+ * imports `./fairygui` from main/ even though fairygui.mjs lives in a
+ * different chunk. After flattening to per-bundle directories, those imports
+ * become broken; this rewrite restores them as `../<otherBundle>/X`.
+ *
+ * Conservative: only rewrites when there's exactly ONE cross-bundle match.
+ * Ambiguous names are left alone (keeps the symptom obvious vs. picking the
+ * wrong sibling silently). `./` only — `../` paths are already explicit.
+ */
+function rewriteCrossBundleImports(text, currentBundle, bundleIndex) {
+  const here = bundleIndex.get(currentBundle);
+  return text.replace(/(from\s*["'])\.\/([^"'/]+)(["'])/g, (full, pre, name, post) => {
+    if (here && here.has(name)) return full; // resolves locally
+    let hit = null;
+    let count = 0;
+    for (const [b, set] of bundleIndex) {
+      if (b === currentBundle) continue;
+      if (set.has(name)) { hit = b; count += 1; }
+    }
+    if (count !== 1) return full; // ambiguous or not found — leave it
+    return `${pre}../${hit}/${name}${post}`;
+  });
 }
 
 /**
