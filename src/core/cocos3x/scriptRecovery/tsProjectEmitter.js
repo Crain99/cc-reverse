@@ -1,10 +1,13 @@
 'use strict';
 
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { mkdir, writeFile } = require('node:fs/promises');
 
 const babelGenerator = require('@babel/generator');
 const generate = babelGenerator.default || babelGenerator;
+
+const { ROLLUP_BABEL_HELPERS_SHIM } = require('./rollupBabelHelpersShim');
 
 let tsMorph; // lazy
 let prettier; // lazy
@@ -51,6 +54,7 @@ async function emitTsProject(modules, context = {}) {
   const wantFormat = process.env.CC_REVERSE_TS_FORMAT === '1';
   let project = null;
   const recoveryIndex = {};
+  const bundlesNeedingShim = new Set();
   let count = 0;
 
   for (const mod of modules) {
@@ -58,6 +62,18 @@ async function emitTsProject(modules, context = {}) {
     const bundle = mod.bundle || 'unbundled';
     const relPath = `${bundle}/${mod.ccclassName}.ts`;
     const fsPath = path.join(outRoot, relPath);
+
+    // Track shim need: any dep starting with './rollupPluginModLoBabelHelpers'
+    // means this bundle must carry the helper file (recovered modules import
+    // it as a sibling). The actual import suffix is stripped by esmRebuilder.
+    if (Array.isArray(mod.deps)) {
+      for (const d of mod.deps) {
+        if (typeof d === 'string' && /(^|\/)rollupPluginModLoBabelHelpers(\.[mc]?[jt]s)?$/i.test(d)) {
+          bundlesNeedingShim.add(bundle);
+          break;
+        }
+      }
+    }
 
     let jsCode;
     try {
@@ -129,7 +145,34 @@ async function emitTsProject(modules, context = {}) {
     path.join(outRoot, 'RECOVERY_INDEX.json'),
     JSON.stringify(recoveryIndex, null, 2) + '\n'
   );
+
+  // Emit a babel-helpers shim into each bundle that referenced it. The
+  // original bundle pulled these from a virtual rollup module; without a
+  // real file Cocos's TS importer reports `Module './rollupPluginModLoBabelHelpers'
+  // not found` at scene load. The shim's uuid is derived from
+  // sha1(bundle + ':rollupPluginModLoBabelHelpers') so re-runs are stable
+  // and two bundles get distinct uuids (Cocos AssetDB dedupes by uuid).
+  for (const bundle of bundlesNeedingShim) {
+    const shimRel = `${bundle}/rollupPluginModLoBabelHelpers.ts`;
+    const shimPath = path.join(outRoot, shimRel);
+    try {
+      await mkdir(path.dirname(shimPath), { recursive: true });
+      await writeFile(shimPath, ROLLUP_BABEL_HELPERS_SHIM);
+      const shimUuid = stableUuid(`${bundle}:rollupPluginModLoBabelHelpers`);
+      const shimMeta = buildTsMeta(shimUuid, 'rollupPluginModLoBabelHelpers');
+      await writeFile(`${shimPath}.meta`, JSON.stringify(shimMeta, null, 2) + '\n');
+    } catch (err) {
+      errors.push(`shim emit failed for bundle "${bundle}" — ${err.message}`);
+    }
+  }
+
   return { filesEmitted: count, errors };
+}
+
+// Format a sha1 digest as a v4-style uuid string. Stable across runs.
+function stableUuid(seed) {
+  const h = crypto.createHash('sha1').update(seed).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
 /**
