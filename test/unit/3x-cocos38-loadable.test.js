@@ -2,16 +2,20 @@
  * Cocos 3.8 loadability — verifies the four blockers reported on slgq-reverse
  * are fixed:
  *   1. db:// prefix no longer creates literal `db:/` directories
- *   2. project.json carries the 3.8 schema fields Dashboard requires
- *   3. settings/project.json carries the `general` / packages_init / build-templates blocks
- *   4. cc.SceneAsset emits a .fire file at its declared path
+ *   2. package.json carries the 3.8 schema (name/type/uuid/version/creator)
+ *      verified against cocos/cocos-test-projects v3.8.7
+ *   3. settings/v2/packages/project.json carries 3.8 settings shape
+ *   4. cc.SceneAsset emits a .fire file at its declared path (covered via
+ *      resolveOutputPath + the new info.path fallback in unpackAsset)
+ *   5. Runtime files (bundle.js, spine.*-hash.js, ...) classify as runtime
+ *      and would route to _runtime/, not assets/Scripts/
  */
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { describe, it, expect, beforeAll } from 'vitest';
 
-import { resolveOutputPath } from '../../src/core/cocos3x/engine3x.js';
+import { resolveOutputPath, isRuntimeScript, RUNTIME_PATTERNS } from '../../src/core/cocos3x/engine3x.js';
 import { writeCocos3xProject } from '../../src/core/cocos3x/projectScaffold.js';
 
 describe('3.x cocos-3.8 loadability', () => {
@@ -34,46 +38,77 @@ describe('3.x cocos-3.8 loadability', () => {
     });
   });
 
-  describe('project.json 3.8 schema', () => {
+  describe('package.json + project layout (3.8 schema)', () => {
+    let pkgJson;
     let projectJson;
-    let settingsJson;
+    let v2Project;
     let outDir;
 
     beforeAll(async () => {
       outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-reverse-3.8-'));
       await writeCocos3xProject(outDir, { projectName: 'demo', cocosVersion: '3.8.3' });
+      pkgJson = JSON.parse(fs.readFileSync(path.join(outDir, 'package.json'), 'utf8'));
       projectJson = JSON.parse(fs.readFileSync(path.join(outDir, 'project.json'), 'utf8'));
-      settingsJson = JSON.parse(fs.readFileSync(path.join(outDir, 'settings', 'project.json'), 'utf8'));
+      v2Project = JSON.parse(fs.readFileSync(
+        path.join(outDir, 'settings', 'v2', 'packages', 'project.json'), 'utf8'));
     });
 
-    it('project.json carries name, uuid, type, packages, package-version', () => {
-      expect(projectJson.name).toBe('demo');
-      expect(typeof projectJson.uuid).toBe('string');
-      expect(projectJson.uuid.length).toBeGreaterThan(0);
-      expect(projectJson.type).toBe('creator-3.x');
-      expect(projectJson.packages).toEqual({ engine: '3.8.3', editor: '>=3.8.3' });
-      expect(projectJson['package-version']).toBe(2);
+    it('package.json carries name, type:3d, uuid, version, creator.version', () => {
+      // Schema verified against cocos/cocos-test-projects v3.8.7/package.json
+      expect(pkgJson.name).toBe('demo');
+      expect(pkgJson.type).toBe('3d');
+      expect(typeof pkgJson.uuid).toBe('string');
+      expect(pkgJson.uuid.length).toBeGreaterThan(0);
+      expect(pkgJson.version).toBe('3.8.3');
+      expect(pkgJson.creator).toEqual({ version: '3.8.3', dependencies: {} });
     });
 
-    it('settings/project.json carries general.engineVersion + 3.8 init blocks', () => {
-      expect(settingsJson.general).toBeDefined();
-      expect(settingsJson.general.engineVersion).toBe('3.8.3');
-      expect(settingsJson.general.designResolution).toBeDefined();
-      expect(settingsJson.debug).toBe(true);
-      expect(settingsJson.packages_init).toEqual({});
-      expect(settingsJson['build-templates']).toEqual({});
+    it('project.json kept as compatibility marker for legacy 2.x readers', () => {
+      expect(projectJson.creator.version).toBe('3.8.3');
     });
 
-    it('seeds extensions/ and build-templates/ directories', () => {
+    it('settings/v2/packages/project.json carries general.designResolution', () => {
+      // Cocos 3.8 reads project settings from this path (not settings/project.json).
+      expect(v2Project.general.designResolution).toBeDefined();
+      expect(v2Project.general.designResolution.width).toBe(1280);
+      expect(v2Project.sortingLayers).toBeDefined();
+    });
+
+    it('seeds extensions/ directory and standard 3.x .gitignore', () => {
       expect(fs.existsSync(path.join(outDir, 'extensions'))).toBe(true);
-      expect(fs.existsSync(path.join(outDir, 'build-templates'))).toBe(true);
-    });
-
-    it('writes a .gitignore with the standard 3.x ignore set', () => {
       const gi = fs.readFileSync(path.join(outDir, '.gitignore'), 'utf8');
       for (const entry of ['library/', 'local/', 'temp/', 'build/']) {
         expect(gi).toContain(entry);
       }
+    });
+  });
+
+  describe('runtime script classifier', () => {
+    it('flags engine adapters and SystemJS bootstrap as runtime', () => {
+      expect(isRuntimeScript('bundle.js')).toBe(true);
+      expect(isRuntimeScript('import-map.js')).toBe(true);
+      expect(isRuntimeScript('application.js')).toBe(true);
+      expect(isRuntimeScript('engine-adapter-min.js')).toBe(true);
+      expect(isRuntimeScript('blapp-adapter-wasm-for-cocos-v3.js')).toBe(true);
+      expect(isRuntimeScript('first-screen.js')).toBe(true);
+      expect(isRuntimeScript('es7.js')).toBe(true);
+      expect(isRuntimeScript('spine-1Pcan4ap.js')).toBe(true);
+      expect(isRuntimeScript('spine.asm-BCCB8IGt.js')).toBe(true);
+      expect(isRuntimeScript('spine.wasm-DxRECbrD.js')).toBe(true);
+    });
+    it('does NOT flag plausible user script names as runtime', () => {
+      // These must remain in assets/Scripts/ so the editor compiles them.
+      expect(isRuntimeScript('Player.js')).toBe(false);
+      expect(isRuntimeScript('GameController.js')).toBe(false);
+      expect(isRuntimeScript('Player-Behavior.js')).toBe(false);  // 8-char tail but not engine-prefixed
+      expect(isRuntimeScript('MyScene-Controller.js')).toBe(false);
+      expect(isRuntimeScript('settings.js')).toBe(false);
+      expect(isRuntimeScript('cc.js')).toBe(false);                // already filtered upstream
+    });
+    it('RUNTIME_PATTERNS is a non-empty array of RegExp instances', () => {
+      expect(Array.isArray(RUNTIME_PATTERNS)).toBe(true);
+      expect(RUNTIME_PATTERNS.length).toBeGreaterThan(0);
+      for (const p of RUNTIME_PATTERNS) expect(p).toBeInstanceOf(RegExp);
     });
   });
 });

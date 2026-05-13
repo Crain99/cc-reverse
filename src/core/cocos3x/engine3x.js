@@ -154,6 +154,29 @@ function stripDbPrefix(p) {
   return p.replace(/^db:\/+(?:assets\/|internal\/)?/i, '');
 }
 
+// Module-level runtime classifier. Files matching any pattern are routed to
+// `<out>/_runtime/` instead of `assets/Scripts/` because they are engine
+// adapters / SystemJS bootstrap / native bindings that Cocos 3.8 must not see
+// in its asset scanner. Patterns are intentionally narrow: each entry is
+// either an exact name from the known Cocos 3.x web/wechatgame runtime
+// manifest, or a hashed-asset pattern bounded to engine-prefix + base62 hash
+// (>= 8 chars) to avoid catching user scripts named `Player-Behavior.js` etc.
+const RUNTIME_PATTERNS = [
+  /^bundle\.js$/i,
+  /^import-map\.js$/i,
+  /^application\.js$/i,
+  /^engine-adapter[^/]*\.js$/i,
+  /^blapp-adapter[^/]*\.js$/i,
+  /^first-screen\.js$/i,
+  /^es\d+\.js$/i,
+  /^spine[.-][^/]*\.(js|wasm)$/i,
+  /^(spine|cc|cocos)\.[a-z]+-[A-Za-z0-9_-]{8,}\.js$/i,
+];
+
+function isRuntimeScript(entry) {
+  return RUNTIME_PATTERNS.some((re) => re.test(entry));
+}
+
 function resolveOutputPath(uuid, cfg, klass, ext = '') {
   const explicit = cfg && cfg.paths && cfg.paths[uuid] && cfg.paths[uuid].path;
   if (explicit) return stripDbPrefix(explicit) + ext;
@@ -992,21 +1015,8 @@ async function recoverScripts(sourcePath, outputPath, verbose, scriptOptions = {
   // happen to live next to user scripts but must NOT be imported into the
   // editor — placing them under assets/ causes Cocos 3.8 to treat them as
   // ccclass scripts and crash on first scan. They go under _runtime/ outside
-  // the assets tree, preserved for analysis.
+  // the assets tree, preserved for analysis. See module-level RUNTIME_PATTERNS.
   const runtimeOut = path.join(outputPath, '_runtime');
-  const RUNTIME_PATTERNS = [
-    /^bundle\.js$/i,
-    /^import-map\.js$/i,
-    /^application\.js$/i,
-    /^engine-adapter.*\.js$/i,
-    /^blapp-adapter.*\.js$/i,
-    /^first-screen\.js$/i,
-    /^es\d+\.js$/i,
-    /^spine[.-].*\.(js|wasm)$/i,
-    /^.*\.(asm|wasm)-[A-Za-z0-9_-]+\.js$/i,
-    /^.*-[A-Za-z0-9]{8,}\.js$/i,
-  ];
-  const isRuntime = (entry) => RUNTIME_PATTERNS.some((re) => re.test(entry));
 
   let total = 0;
   for (const dir of candidates) {
@@ -1017,12 +1027,13 @@ async function recoverScripts(sourcePath, outputPath, verbose, scriptOptions = {
       if (entry.startsWith('system.') || entry.startsWith('polyfills.')) continue;
       if (entry === 'cc.js') continue;
       const src = path.join(dir, entry);
-      const dest = isRuntime(entry)
+      const runtime = isRuntimeScript(entry);
+      const dest = runtime
         ? path.join(runtimeOut, entry)
         : path.join(scriptsOut, entry);
       await mkdir(path.dirname(dest), { recursive: true });
       await copyFile(src, dest);
-      if (!isRuntime(entry)) await writeScriptMeta(dest);
+      if (!runtime) await writeScriptMeta(dest);
       if (verbose) logger.debug(`Script: ${entry}`);
       total += 1;
     }
@@ -1280,4 +1291,7 @@ module.exports = {
   writeRecoveryReport,
   KLASS_TO_IMPORTER,
   detectProjectFlavor,
+  stripDbPrefix,
+  isRuntimeScript,
+  RUNTIME_PATTERNS,
 };
