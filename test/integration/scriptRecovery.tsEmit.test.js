@@ -37,6 +37,16 @@ describe('Layer 6: tsProjectEmitter (integration)', () => {
     await access(path.join(tmp, 'tsconfig.json'));
     const idx = JSON.parse(await readFile(path.join(tmp, 'RECOVERY_INDEX.json'), 'utf8'));
     expect(idx['p-uuid']).toEqual({ path: 'main/Player.ts', className: 'Player' });
+
+    // .ts.meta uuid MUST equal the _RF.push uuid carried on mod.uuid — this
+    // is what lets game.scene's `__type__: "p-uuid"` references resolve to
+    // the recovered Player class instead of the brown UnknownNode fallback.
+    const metaPath = `${tsPath}.meta`;
+    await access(metaPath);
+    const meta = JSON.parse(await readFile(metaPath, 'utf8'));
+    expect(meta.uuid).toBe('p-uuid');
+    expect(meta.importer).toBe('typescript');
+    expect(meta.ver).toBe('4.0.21');
   });
 
   it('returns {filesEmitted:0} when no modules', async () => {

@@ -92,7 +92,17 @@ async function emitTsProject(modules, context = {}) {
       continue;
     }
 
+    // Emit <ClassName>.ts.meta — uuid MUST match the chunk's _RF.push uuid so
+    // scene `__type__` references resolve when the editor scans assets/.
+    // Without this, components in game.scene fall back to UnknownNode and the
+    // canvas renders as the brown clear-color (the slgq-out symptom).
     if (mod.uuid) {
+      const meta = buildTsMeta(mod.uuid, mod.ccclassName);
+      try {
+        await writeFile(`${fsPath}.meta`, JSON.stringify(meta, null, 2) + '\n');
+      } catch (err) {
+        errors.push(`${mod.name}: meta write failed — ${err.message}`);
+      }
       recoveryIndex[mod.uuid] = { path: relPath, className: mod.ccclassName };
     }
     count += 1;
@@ -150,4 +160,29 @@ async function writeTsconfig(root) {
   await writeFile(path.join(root, 'tsconfig.json'), JSON.stringify(cfg, null, 2) + '\n');
 }
 
-module.exports = { emitTsProject };
+/**
+ * Build the .ts.meta JSON the Cocos 3.8 editor expects for a TS script asset.
+ * Shape verified against cocos-test-projects v3.8.7 (typescript importer
+ * ver 4.0.21). The `uuid` field is the load-bearing one — scenes reference
+ * components via `__type__: "<uuid>"`, so this MUST be the uuid captured from
+ * `_RF.push(module, uuid, name)` in the original SystemJS bundle, not random.
+ *
+ * @param {string} uuid stable uuid from _RF.push
+ * @param {string} className recovered ccclass name (used for displayName)
+ */
+function buildTsMeta(uuid, className) {
+  return {
+    ver: '4.0.21',
+    importer: 'typescript',
+    imported: true,
+    uuid,
+    files: [],
+    subMetas: {},
+    userData: {
+      moduleId: `project:///assets/scripts/${className}.ts`,
+      recoveredBy: 'cc-reverse',
+    },
+  };
+}
+
+module.exports = { emitTsProject, buildTsMeta };
