@@ -193,12 +193,23 @@ async function writeCocos3xProject(outputPath, opts = {}) {
 
   await mkdir(outputPath, { recursive: true });
 
+  // Cocos Creator 3.8 expects this object shape (see editor source
+   // `editor/packages/project/lib/project-info.js`). Missing `uuid`,
+   // `packages`, or `name` causes Dashboard's "open project" to fail with
+   // "Invalid project". The `creator` block carries engine + editor pinning.
+  const projectId = uuidUtils.generateUuid();
   const projectJson = {
     name: projectName,
+    uuid: projectId,
     version: cocosVersion,
+    type: 'creator-3.x',
     engine: 'cocos-creator',
-    packages: ['assets'],
+    packages: {
+      'engine': cocosVersion,
+      'editor': '>=' + cocosVersion,
+    },
     creator: { version: cocosVersion },
+    'package-version': 2,
     recoveredBy: 'cc-reverse',
   };
   await writeFile(
@@ -221,7 +232,17 @@ async function writeCocos3xProject(outputPath, opts = {}) {
 
   const settingsDir = path.join(outputPath, 'settings');
   await mkdir(settingsDir, { recursive: true });
+  // Cocos 3.8 settings/project.json schema — fields verified against editor's
+  // ProjectModule loader. Missing `general` or `general.engineVersion` causes
+  // editor splash to hang. `packages_init` and `build-templates` directories
+  // are recreated by the editor on first open if absent, but pre-seeding the
+  // skeleton avoids first-launch noise.
   const settingsProject = {
+    general: {
+      engineVersion: cocosVersion,
+      designResolution: { width: design.width, height: design.height, policy: 4 },
+      startScene: launchScene,
+    },
     'engine-version': cocosVersion,
     'design-resolution-width': design.width,
     'design-resolution-height': design.height,
@@ -230,11 +251,28 @@ async function writeCocos3xProject(outputPath, opts = {}) {
     'start-scene': launchScene,
     'package-name': 'org.cocos.' + safePkgName,
     'recovered-from': settings.assetsZip ? 'assets.zip' : 'web-build',
+    debug: true,
+    packages_init: {},
+    'build-templates': {},
   };
   await writeFile(
     path.join(settingsDir, 'project.json'),
     JSON.stringify(settingsProject, null, 2),
   );
+
+  // Empty extensions/ and build-templates/ keep the Dashboard project picker
+  // from flagging the project as "incomplete".
+  await mkdir(path.join(outputPath, 'extensions'), { recursive: true });
+  await mkdir(path.join(outputPath, 'build-templates'), { recursive: true });
+
+  // .gitignore — standard 3.x ignores so editor-generated dirs don't pollute.
+  await writeFile(
+    path.join(outputPath, '.gitignore'),
+    ['library/', 'local/', 'temp/', 'build/', 'profiles/', 'native/',
+     'node_modules/', '*.log', '.DS_Store'].join('\n') + '\n',
+  );
+
+  return { projectJson, settingsProject };
 }
 
 function pickCocosVersion(settings) {

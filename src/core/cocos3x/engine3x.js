@@ -145,9 +145,18 @@ const KLASS_TO_IMPORTER = {
  * @param {string} klass cc class name
  * @param {string} [ext='']
  */
+function stripDbPrefix(p) {
+  if (typeof p !== 'string') return p;
+  // Cocos editor stores asset paths as `db://assets/foo` or `db://internal/bar`.
+  // When materialised to disk we must drop the scheme; the bundle's own subdir
+  // already encodes the namespace. Without this strip the recovered tree
+  // contains literal `db:/` directories which Cocos 3.8 refuses to import.
+  return p.replace(/^db:\/+(?:assets\/|internal\/)?/i, '');
+}
+
 function resolveOutputPath(uuid, cfg, klass, ext = '') {
   const explicit = cfg && cfg.paths && cfg.paths[uuid] && cfg.paths[uuid].path;
-  if (explicit) return explicit + ext;
+  if (explicit) return stripDbPrefix(explicit) + ext;
   const sub = CLASS_DIR[klass] || 'raw';
   return path.join(sub, uuid) + ext;
 }
@@ -535,9 +544,16 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
   const nativeSrc = nativeExt ? getNativePath(cfg, uuid, nativeExt) : null;
 
   // Choose an output path. Prefer the project path from config.paths — that's
-  // what the editor will see.
+  // what the editor will see. Falls back to info.path when the caller supplies
+  // one (scene loop passes a synthetic info.path because cc.SceneAsset entries
+  // live in cfg.scenes, not cfg.paths).
   const className = info.type || 'cc.Asset';
-  const relPath = resolveOutputPath(uuid, cfg, className);
+  let relPath = resolveOutputPath(uuid, cfg, className);
+  if (!cfg.paths || !cfg.paths[uuid]) {
+    if (info && typeof info.path === 'string' && info.path) {
+      relPath = stripDbPrefix(info.path);
+    }
+  }
   const outBase = path.join(bundleOut, relPath);
   await mkdir(path.dirname(outBase), { recursive: true });
 
@@ -972,6 +988,25 @@ async function recoverScripts(sourcePath, outputPath, verbose, scriptOptions = {
     path.join(sourcePath, 'cocos-js'),
   ];
   const scriptsOut = path.join(outputPath, 'assets', 'Scripts');
+  // Runtime files (engine adapters, SystemJS bootstrap, native bindings) that
+  // happen to live next to user scripts but must NOT be imported into the
+  // editor — placing them under assets/ causes Cocos 3.8 to treat them as
+  // ccclass scripts and crash on first scan. They go under _runtime/ outside
+  // the assets tree, preserved for analysis.
+  const runtimeOut = path.join(outputPath, '_runtime');
+  const RUNTIME_PATTERNS = [
+    /^bundle\.js$/i,
+    /^import-map\.js$/i,
+    /^application\.js$/i,
+    /^engine-adapter.*\.js$/i,
+    /^blapp-adapter.*\.js$/i,
+    /^first-screen\.js$/i,
+    /^es\d+\.js$/i,
+    /^spine[.-].*\.(js|wasm)$/i,
+    /^.*\.(asm|wasm)-[A-Za-z0-9_-]+\.js$/i,
+    /^.*-[A-Za-z0-9]{8,}\.js$/i,
+  ];
+  const isRuntime = (entry) => RUNTIME_PATTERNS.some((re) => re.test(entry));
 
   let total = 0;
   for (const dir of candidates) {
@@ -982,10 +1017,12 @@ async function recoverScripts(sourcePath, outputPath, verbose, scriptOptions = {
       if (entry.startsWith('system.') || entry.startsWith('polyfills.')) continue;
       if (entry === 'cc.js') continue;
       const src = path.join(dir, entry);
-      const dest = path.join(scriptsOut, entry);
+      const dest = isRuntime(entry)
+        ? path.join(runtimeOut, entry)
+        : path.join(scriptsOut, entry);
       await mkdir(path.dirname(dest), { recursive: true });
       await copyFile(src, dest);
-      await writeScriptMeta(dest);
+      if (!isRuntime(entry)) await writeScriptMeta(dest);
       if (verbose) logger.debug(`Script: ${entry}`);
       total += 1;
     }
