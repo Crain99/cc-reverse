@@ -104,3 +104,25 @@ Test counts:
 - `npm run e2e`: 3 samples, all `unpackStatus=0`, all `validateStatus=0`, all
   6/6 gates pass.
 
+
+## PR 9 修复后 (gate strictness)
+
+`layeredScripts` gate 由"总是 true"改为严格判定：基于
+`RECOVERY_REPORT.md` 的 bundle 数和 `RECOVERY_INDEX.json` 的 declared 数对
+`assets/Scripts/` 实际产物量做下限校验。
+
+| Sample              | layeredScripts | 备注 |
+|---------------------|----------------|------|
+| slgq-reverse        | pass (9 files / 3 bundles) | 充足 |
+| dabaoyiqie-reverse  | pass | 2.x，无 Scripts 目录，informational pass |
+| cgxfd-reverse       | **skip**（gate 现在会 fail） | 见下 |
+
+**cgxfd-reverse 根因（已记录，待 follow-up）**：项目带
+`assets/{internal,resources}/config.json` 3.x bundle 标记被
+`detectProjectFlavor` 判为 3.x，但 `src/scripts/<name>/index.js` 实际是 2.x
+browserify 风格 bundle（`!function r(e,n,t){...}`），不是 3.x
+`System.register(...)`，故 3.x `chunkSplitter` 找不到任何 chunk，
+`assets/Scripts/` 仅产出 `settings.js`。修复需要在 detector 或 3.x pipeline
+里加 fallback：当未发现 `System.register` 但发现 browserify 模式时，要么改走
+2.x 路径，要么单独抽 browserify 切片器。本 PR 只严格化 gate；样本在
+`test/e2e/golden.test.js` 里以 `skip: true` 暂时跳过，等根因修复后再启用。
