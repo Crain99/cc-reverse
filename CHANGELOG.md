@@ -5,6 +5,8 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+- **fix(2x→3.x dispatch): recognise hashed `config.<hash>.json` bundles.** wechatgame and other mini-game flavours of Cocos Creator 3.x emit `assets/<bundle>/config.<md5>.json` instead of plain `config.json`. Both `reverseEngine.is3xRoot()` and `engine3x.discoverBundles()` previously matched only the literal name, so the `dabaoyiqie-reverse` sample was misclassified as 2.4.x and routed through the legacy `resourceProcessor` (which then emitted 0 files because there is no `res/` tree to walk in this layout). Both code paths now accept either filename via the shared regex `/^config\.[0-9a-f]+\.json$/i`. Tests in `test/unit/3x-hashed-bundle-config.test.js`. Before/after on `dabaoyiqie-reverse`: detected as 2.4.x, `Resources processed: 0`, no `assets/` dir → detected as 3.x, 3 bundles unpacked (internal 18 uuids, main 21 uuids, font 7 uuids), 73 files under `assets/{internal,main,font,Scripts}/`.
+
 ## PR 8 — E2E harness + CLI dispatch fix + 首轮 golden 基线
 
 - **fix(report): align RECOVERY_REPORT declared count with filesystem.** `engine3x.writeRecoveryReport` now reconciles bundle-summary totals against a recursive non-`.meta` file count under `<out>/assets`, emitting an `__extras__` row when the bundle counter undercounts (recovered scripts, internal sub-assets, etc.). Resolves the `declared N vs actual M` failures on `slgq-reverse` (45 vs 62) and `cgxfd-reverse` (29 vs 33). Tests in `test/unit/3x-recoveryReport-declared.test.js`.
