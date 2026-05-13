@@ -18,6 +18,17 @@ const { parse } = require('@babel/parser');
 async function restoreClasses(ast, _mod) {
   if (!ast) return null;
 
+  // Fast path: when the chunk has already been webcrack'd at the engine
+  // level (mod.preminified === true), __extends/__decorate are already
+  // collapsed and the per-module webcrack hop is pure overhead. Skip
+  // straight to the structural folds, which are no-ops when the AST is
+  // already clean. Saves ~870 ms × N modules on slgq-class chunks.
+  if (_mod && _mod.preminified) {
+    foldExtendsIife(ast);
+    foldDecorate(ast);
+    return ast;
+  }
+
   // 1. Hand off to webcrack for __extends collapsing. Webcrack consumes source
   //    text, not AST — we round-trip via generator/parse.
   const before = generate(ast, { compact: false }).code;

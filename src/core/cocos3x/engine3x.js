@@ -1105,24 +1105,88 @@ async function recoverScripts(sourcePath, outputPath, verbose, scriptOptions = {
  */
 async function recoverScriptsLayered(sourcePath, outputPath, verbose, options = {}) {
   const scriptLayers = options.scriptLayers != null ? options.scriptLayers : 6;
-  const chunksDir = path.join(sourcePath, 'src', 'chunks');
-  if (!(await pathExists(chunksDir))) return { modulesEmitted: 0, tsFilesEmitted: 0, errors: [] };
-  const entries = await readdir(chunksDir);
   const chunks = [];
-  for (const entry of entries) {
-    if (!entry.endsWith('.js')) continue;
-    const full = path.join(chunksDir, entry);
-    const source = await readFile(full, 'utf8');
-    chunks.push({ name: entry, source });
+
+  // Source A: src/chunks/*.js — the canonical 3.x web build layout. Each file
+  // is one or more `System.register(...)` modules.
+  const chunksDir = path.join(sourcePath, 'src', 'chunks');
+  if (await pathExists(chunksDir)) {
+    const entries = await readdir(chunksDir);
+    for (const entry of entries) {
+      if (!entry.endsWith('.js')) continue;
+      const full = path.join(chunksDir, entry);
+      const source = await readFile(full, 'utf8');
+      // bundle name = chunk basename so .ts lands under assets/scripts/<chunk>/
+      chunks.push({ name: entry, source, bundle: entry.replace(/\.js$/, '') });
+    }
   }
+
+  // Source B: subpackages/<bundle>/{game,index}.js — the WeChat/Bilibili
+  // mini-game layout (slgq is shipped this way). Hundreds of ccclass
+  // System.register calls live here. Without this, splitter sees zero
+  // modules even when the build has 970+ ccclasses, and game.scene
+  // `__type__` refs all fall back to UnknownNode (the brown screen).
+  const subRoot = path.join(sourcePath, 'subpackages');
+  if (await pathExists(subRoot)) {
+    const subDirs = await readdir(subRoot, { withFileTypes: true });
+    for (const d of subDirs) {
+      if (!d.isDirectory()) continue;
+      for (const scriptName of ['game.js', 'index.js']) {
+        const full = path.join(subRoot, d.name, scriptName);
+        if (!(await pathExists(full))) continue;
+        const source = await readFile(full, 'utf8');
+        chunks.push({
+          name: `${d.name}__${scriptName}`,
+          source,
+          bundle: d.name, // align with bundle dir under assets/<bundle>/
+        });
+        break; // prefer game.js over index.js, as the unpacker does
+      }
+    }
+  }
+
   if (chunks.length === 0) return { modulesEmitted: 0, tsFilesEmitted: 0, errors: [] };
+
+  // Pre-pass: run webcrack(unminify) ONCE per chunk to collapse __extends /
+  // __decorate before splitting. Doing this per-module inside classRestorer
+  // costs ~870 ms × N (slgq: 974 modules → 14 min). One whole-chunk call
+  // takes ~38 s and produces equivalent output (no leftover __extends or
+  // __decorate). Modules carry `preminified: true` so classRestorer skips
+  // its own webcrack hop. On webcrack failure we leave the chunk untouched
+  // and fall back to per-module unminify.
+  let webcrackFn = null;
+  try {
+    ({ webcrack: webcrackFn } = require('webcrack'));
+  } catch {
+    try {
+      const mod = await import('webcrack');
+      webcrackFn = mod.webcrack || (mod.default && mod.default.webcrack);
+    } catch { /* webcrack unavailable; per-module path will run as before */ }
+  }
+  if (typeof webcrackFn === 'function') {
+    for (const chunk of chunks) {
+      try {
+        const r = await webcrackFn(chunk.source, {
+          jsx: false,
+          mangle: false,
+          unminify: true,
+          deobfuscate: false,
+          unpack: false,
+        });
+        chunk.source = r.code;
+        chunk.preminified = true;
+      } catch (err) {
+        if (verbose) logger.debug(`webcrack pre-pass failed on ${chunk.name}: ${err.message}`);
+      }
+    }
+  }
 
   const scenes = await collectRecoveredScenes(outputPath);
 
   const allErrors = [];
   let allModules = [];
   for (const chunk of chunks) {
-    const baseName = chunk.name.replace(/\.js$/, '');
+    const baseName = chunk.bundle || chunk.name.replace(/\.js$/, '');
     const { modules, errors } = await runScriptRecoveryPipeline({
       chunks: [chunk],
       context: { scenes, bundle: baseName },
@@ -1271,6 +1335,18 @@ async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
   if (report) {
     lines.push('', '---', '', report.toMarkdown());
   }
+
+  // Surface scene ccclass uuid coverage so operators can see, in the same
+  // report, whether scene `__type__` refs actually resolve to recovered
+  // scripts. Without this it's easy to ship a "successful" recovery that
+  // still brown-screens because every Component fell back to UnknownNode.
+  try {
+    const sceneCcclassCoverage = require('../../validate/gates/sceneCcclassCoverage');
+    const cov = sceneCcclassCoverage(outputPath);
+    if (cov && typeof cov === 'object' && cov.detail) {
+      lines.push('', '## Scene ccclass coverage', '', `- ${cov.detail}`);
+    }
+  } catch { /* gate failure should not block report emit */ }
 
   // Reconcile declared counts with the actual on-disk asset tree so the
   // recoveryReport validate gate (which sums `ok+failed+missed` from the
