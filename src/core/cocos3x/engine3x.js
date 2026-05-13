@@ -1272,6 +1272,18 @@ async function writeRecoveryReport(outputPath, summary, sourcePath, report) {
     lines.push('', '---', '', report.toMarkdown());
   }
 
+  // Surface scene ccclass uuid coverage so operators can see, in the same
+  // report, whether scene `__type__` refs actually resolve to recovered
+  // scripts. Without this it's easy to ship a "successful" recovery that
+  // still brown-screens because every Component fell back to UnknownNode.
+  try {
+    const sceneCcclassCoverage = require('../../validate/gates/sceneCcclassCoverage');
+    const cov = sceneCcclassCoverage(outputPath);
+    if (cov && typeof cov === 'object' && cov.detail) {
+      lines.push('', '## Scene ccclass coverage', '', `- ${cov.detail}`);
+    }
+  } catch { /* gate failure should not block report emit */ }
+
   // Reconcile declared counts with the actual on-disk asset tree so the
   // recoveryReport validate gate (which sums `ok+failed+missed` from the
   // markdown and compares it to a recursive file count under assets/) sees a
