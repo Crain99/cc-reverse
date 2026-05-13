@@ -56,6 +56,18 @@ async function splitChunks(chunk) {
         .filter((el) => t.isStringLiteral(el))
         .map((el) => el.value);
 
+      // Container-wrapper detection: src/chunks/bundle.js (the vendor mega-
+      // chunk that carries fairygui/crypto-js/tslib/…) wraps its inner
+      // System.register calls in an outer `System.register([], function(_export,
+      // _context){ return { execute: function () { …inner registers… } }; })`.
+      // If we accept the outer match and `p.skip()`, every inner register is
+      // lost. Heuristic: anonymous (no registerId) + empty deps + factory body
+      // contains nested `System.register(...)` calls → treat as container and
+      // continue traversal instead of emitting a module.
+      if (registerId === null && deps.length === 0 && factoryHasNestedRegister(factory)) {
+        return; // do NOT skip — let traverse descend into the inner registers
+      }
+
       const modName = deriveModuleName(registerId, name, modules.length);
       // Capture the factory's first parameter name — terser/webcrack rename
       // `_export` to a single letter (e.g. `e`, `r`). esmRebuilder needs this
@@ -94,6 +106,35 @@ function deriveModuleName(registerId, fallback, index) {
     return tail.replace(/\.(ts|js|mjs)$/i, '');
   }
   return `${fallback.replace(/\.js$/, '')}_${index}`;
+}
+
+// Walk the factory body to see if it contains a nested `System.register(...)`
+// call. Used to recognise the bundle.js container wrapper described above.
+// Cheap synchronous traversal — no babel-traverse, just an inline visitor.
+function factoryHasNestedRegister(factory) {
+  let found = false;
+  function visit(node) {
+    if (found || !node || typeof node !== 'object') return;
+    if (node.type === 'CallExpression') {
+      const c = node.callee;
+      if (
+        c && c.type === 'MemberExpression' &&
+        c.object && c.object.type === 'Identifier' && c.object.name === 'System' &&
+        c.property && c.property.type === 'Identifier' && c.property.name === 'register'
+      ) {
+        found = true;
+        return;
+      }
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'loc' || key === 'start' || key === 'end') continue;
+      const v = node[key];
+      if (Array.isArray(v)) for (const c of v) visit(c);
+      else if (v && typeof v === 'object' && v.type) visit(v);
+    }
+  }
+  visit(factory.body);
+  return found;
 }
 
 function extractFactoryBody(factory) {
