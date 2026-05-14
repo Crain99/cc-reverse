@@ -90,15 +90,11 @@ function transformEffectAsset(jsonText) {
     return null;
   }
   if (!asset || asset.__type__ !== 'cc.EffectAsset') return null;
-  if (isBuiltinEffect(asset)) {
-    // Keep the .meta registered (materials reference these uuids) but emit a
-    // minimal placeholder source so the editor's effect compiler doesn't try
-    // to recompile a stripped-down builtin. The placeholder declares the
-    // smallest valid technique with no shaders; engine builtins of the same
-    // basename are owned by the engine and resolved separately at runtime.
-    const stub = `// builtin placeholder: ${asset._name || ''}\nCCEffect %{\n  techniques:\n  - passes: []\n}%\n`;
-    return { skip: false, source: stub, name: asset._name || '', builtin: true };
-  }
+  // Builtin effects are owned by the engine — once references are decoded to
+  // their real long uuids (see rehydrate decodeUuid), materials resolve
+  // straight to the engine's copy. Emitting our own .effect/.meta would just
+  // collide with the engine asset on the same uuid.
+  if (isBuiltinEffect(asset)) return { skip: true, name: asset._name };
 
   const yaml = buildYaml(asset);
   const programs = buildPrograms(asset);
@@ -362,7 +358,7 @@ function postProcessGlsl(src, shader) {
     return `uniform ${b.name} {\n${members}\n};`;
   });
   const header = [];
-  if (usesBuiltin) header.push('#include <legacy/cc-global>');
+  if (usesBuiltin) header.push('#include <builtin/uniforms/cc-global>');
   if (blockDecls.length) header.push(...blockDecls);
   if (!header.length) return out.join('\n');
 

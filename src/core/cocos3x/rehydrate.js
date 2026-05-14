@@ -31,6 +31,8 @@
 // Enum mirrors (must match deserialize.ts)
 // ---------------------------------------------------------------------------
 
+const { uuidUtils } = require('../../utils/uuidUtils');
+
 const DataTypeID = Object.freeze({
   SimpleType: 0,
   InstanceRef: 1,
@@ -153,10 +155,21 @@ function isIFileDataTuple(doc) {
 // Context setup
 // ---------------------------------------------------------------------------
 
+// .json/.cconb dependency tables embed asset uuids as 22-char compressed
+// strings. The runtime expands these via decodeUuid before exposing them on
+// asset records. We mirror that here so the emitted `{__uuid__}` markers
+// match the long-form uuids that bundleConfig already feeds into .meta.
+// Anything that is not a 22-char compressed token (already-long uuids,
+// random ids) passes through unchanged.
+function decodeMaybeShortUuid(value) {
+  if (typeof value !== 'string' || value.length !== 22) return value;
+  return uuidUtils.decodeUuid(value);
+}
+
 function buildContext(doc) {
   return {
     version: doc[File.Version],
-    sharedUuids: arrayOrEmpty(doc[File.SharedUuids]),
+    sharedUuids: arrayOrEmpty(doc[File.SharedUuids]).map(decodeMaybeShortUuid),
     sharedStrings: arrayOrEmpty(doc[File.SharedStrings]),
     sharedClasses: arrayOrEmpty(doc[File.SharedClasses]),
     sharedMasks: arrayOrEmpty(doc[File.SharedMasks]),
