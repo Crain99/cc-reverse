@@ -90,7 +90,15 @@ function transformEffectAsset(jsonText) {
     return null;
   }
   if (!asset || asset.__type__ !== 'cc.EffectAsset') return null;
-  if (isBuiltinEffect(asset)) return { skip: true, name: asset._name };
+  if (isBuiltinEffect(asset)) {
+    // Keep the .meta registered (materials reference these uuids) but emit a
+    // minimal placeholder source so the editor's effect compiler doesn't try
+    // to recompile a stripped-down builtin. The placeholder declares the
+    // smallest valid technique with no shaders; engine builtins of the same
+    // basename are owned by the engine and resolved separately at runtime.
+    const stub = `// builtin placeholder: ${asset._name || ''}\nCCEffect %{\n  techniques:\n  - passes: []\n}%\n`;
+    return { skip: false, source: stub, name: asset._name || '', builtin: true };
+  }
 
   const yaml = buildYaml(asset);
   const programs = buildPrograms(asset);
@@ -280,10 +288,10 @@ function buildPrograms(asset) {
     const stages = splitProgramName(sh.name);
     const glsl = sh.glsl1 || sh.glsl3 || sh.glsl4 || {};
     if (stages.vert && glsl.vert) {
-      programs.push({ name: stages.vert.split(':')[0], body: glsl.vert });
+      programs.push({ name: stages.vert.split(':')[0], body: postProcessGlsl(glsl.vert, sh) });
     }
     if (stages.frag && glsl.frag) {
-      programs.push({ name: stages.frag.split(':')[0], body: glsl.frag });
+      programs.push({ name: stages.frag.split(':')[0], body: postProcessGlsl(glsl.frag, sh) });
     }
   }
   // Dedup by name (vert/frag from multiple shaders of the same effect repeat).
@@ -293,6 +301,82 @@ function buildPrograms(asset) {
     seen.add(p.name);
     return true;
   });
+}
+
+// Engine-provided builtin uniforms (cc-global, cc-local, cc-shadow includes).
+// The compiled glsl1 has these expanded as bare uniforms — Cocos's source
+// effect compiler rejects bare vector/matrix uniforms (EFX2201). We strip
+// them here and emit a `#include <legacy/cc-global>` so the editor's
+// preprocessor re-supplies the declarations from the engine's chunk library.
+const BUILTIN_UNIFORMS = new Set([
+  'cc_matView', 'cc_matProj', 'cc_matViewProj', 'cc_matViewInv', 'cc_matProjInv', 'cc_matViewProjInv',
+  'cc_matWorld', 'cc_matWorldIT', 'cc_matWorldView', 'cc_matWorldViewProj',
+  'cc_cameraPos', 'cc_screenSize', 'cc_nativeSize', 'cc_screenScale', 'cc_exposure',
+  'cc_time', 'cc_mainLitDir', 'cc_mainLitColor', 'cc_ambientSky', 'cc_ambientGround',
+  'cc_fogColor', 'cc_fogBase', 'cc_fogAdd', 'cc_nearFar', 'cc_viewPort',
+  'cc_matLightView', 'cc_matLightViewProj', 'cc_shadowInvProjDepthInfo',
+  'cc_shadowProjDepthInfo', 'cc_shadowProjInfo', 'cc_shadowNFLSInfo',
+  'cc_shadowWHPBInfo', 'cc_shadowLPNNInfo', 'cc_shadowColor', 'cc_planarNDInfo',
+  'cc_localShadowBias',
+]);
+
+// Match `[layout(...)] uniform [highp|mediump|lowp] <type> <name>;` (single-line).
+// Only applies to non-sampler, non-block uniforms. Captures name in group 4.
+const BARE_UNIFORM_RE = /^([\t ]*)(?:layout\s*\([^)]*\)\s*)?uniform\s+(?:highp\s+|mediump\s+|lowp\s+)?(\w+)\s+(\w+)\s*(?:\[[^\]]*\])?\s*;[\t ]*$/;
+
+function postProcessGlsl(src, shader) {
+  if (typeof src !== 'string' || !src) return src;
+  const blocks = Array.isArray(shader && shader.blocks) ? shader.blocks : [];
+  // Map each user-block-member name → owning block index, so we can drop
+  // bare uniforms that the JSON says belong inside a block.
+  const memberToBlock = new Map(); // name → blockIndex
+  for (let i = 0; i < blocks.length; i++) {
+    for (const m of (blocks[i].members || [])) memberToBlock.set(m.name, i);
+  }
+
+  const lines = src.split('\n');
+  const out = [];
+  let usesBuiltin = false;
+  for (const line of lines) {
+    const m = line.match(BARE_UNIFORM_RE);
+    if (m) {
+      const type = m[2];
+      const name = m[3];
+      // Keep sampler*/image* declarations (samplers may stand alone in GLSL).
+      if (/^sampler/.test(type) || /^image/.test(type)) { out.push(line); continue; }
+      // Drop builtin cc_* uniforms — the include will re-supply them.
+      if (BUILTIN_UNIFORMS.has(name) || name.startsWith('cc_')) { usesBuiltin = true; continue; }
+      // Drop user uniforms that the JSON declares inside a block — a
+      // synthesized `uniform <Block> { ... };` will replace them.
+      if (memberToBlock.has(name)) continue;
+    }
+    out.push(line);
+  }
+
+  // Synthesize block declarations from JSON metadata. Insert them after the
+  // first `precision …;` line so they appear at top-level uniform scope.
+  const blockDecls = blocks.map((b) => {
+    const members = (b.members || [])
+      .map((mm) => `  ${gfxTypeToGlsl(mm.type)} ${mm.name}${typeof mm.count === 'number' && mm.count > 1 ? `[${mm.count}]` : ''};`)
+      .join('\n');
+    return `uniform ${b.name} {\n${members}\n};`;
+  });
+  const header = [];
+  if (usesBuiltin) header.push('#include <legacy/cc-global>');
+  if (blockDecls.length) header.push(...blockDecls);
+  if (!header.length) return out.join('\n');
+
+  // Find precision line; otherwise prepend at top.
+  let insertAt = 0;
+  for (let i = 0; i < out.length; i++) {
+    if (/^\s*precision\s+/.test(out[i])) { insertAt = i + 1; break; }
+  }
+  out.splice(insertAt, 0, ...header);
+  return out.join('\n');
+}
+
+function gfxTypeToGlsl(type) {
+  return GFX_TYPE[type] || 'float';
 }
 
 function indent(text, n) {
