@@ -19,6 +19,15 @@ async function runReverse(options) {
     logger.info('用法: node index.js --path <源项目路径>');
     process.exit(1);
   }
+  // Guard against commander's "flag-as-value" trap: `-o -s` parses to
+  // output="-s" (no silent), which silently writes 974 .ts files into
+  // ./-s/. Explicitly reject any path-like option that begins with `-`.
+  for (const [flag, val] of [['--output', options.output], ['--path', sourcePath]]) {
+    if (typeof val === 'string' && val.startsWith('-')) {
+      logger.error(`错误: ${flag} 的值不能以 '-' 开头 (got "${val}") — 可能是相邻选项被当成了它的值，请检查命令行参数`);
+      process.exit(1);
+    }
+  }
   try {
     logger.info('开始处理项目...');
     await reverseProject({

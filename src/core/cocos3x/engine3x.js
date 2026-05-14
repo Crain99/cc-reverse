@@ -29,6 +29,7 @@ const { rehydrateIFileData, rehydrateIPackedFileData } = require('./rehydrate');
 const { writeCocos2xProject, writeCocos3xProject } = require('./projectScaffold');
 const { RecoveryReport } = require('./recoveryReport');
 const { runScriptRecoveryPipeline, emitTsProject } = require('./scriptRecovery');
+const { transformEffectAsset } = require('./assetRecovery/effectTransformer');
 const generatorModule = require('@babel/generator');
 const generate = generatorModule.default || generatorModule;
 
@@ -182,6 +183,33 @@ function resolveOutputPath(uuid, cfg, klass, ext = '') {
   if (explicit) return stripDbPrefix(explicit) + ext;
   const sub = CLASS_DIR[klass] || 'raw';
   return path.join(sub, uuid) + ext;
+}
+
+/**
+ * Write an asset's import document to disk. EffectAsset documents are
+ * transformed from runtime JSON into Cocos Editor's source `.effect` form
+ * (CCEffect YAML + CCProgram GLSL blocks). Builtin effects (owned by the
+ * engine) are skipped entirely — the function returns false to tell the
+ * caller to short-circuit and not emit a .meta either. All other assets
+ * pass through as JSON unchanged.
+ *
+ * Returns true on write, false when the caller should bail (builtin effect).
+ */
+async function writeAssetImport(filePath, content, className) {
+  if (className === 'cc.EffectAsset') {
+    const result = transformEffectAsset(JSON.stringify(content));
+    if (result && result.skip) return false;
+    if (result && result.source) {
+      await writeFile(filePath, result.source);
+      return true;
+    }
+    // Transformer rejected the doc — fall back to JSON. The editor will still
+    // error on this file, but the rest of the project keeps working and the
+    // failure surface tells us which effect the transformer doesn't handle.
+    logger.debug(`effect transformer fallback (raw JSON) for ${filePath}`);
+  }
+  await writeFile(filePath, JSON.stringify(content, null, 2));
+  return true;
 }
 
 /**
@@ -624,7 +652,8 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
         const content = disabled
           ? importDoc
           : (tryRehydrate(importDoc) || importDoc);
-        await writeFile(outBase + importExt, JSON.stringify(content, null, 2));
+        const wrote = await writeAssetImport(outBase + importExt, content, className);
+        if (wrote === false) return false; // builtin effect — caller short-circuits
       }
       importRecovered = true;
     }
@@ -638,7 +667,8 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
         const content = disabled
           ? importDoc
           : (tryRehydrate(importDoc) || importDoc);
-        await writeFile(outBase + importExt, JSON.stringify(content, null, 2));
+        const wrote = await writeAssetImport(outBase + importExt, content, className);
+        if (wrote === false) return false;
       }
       importRecovered = true;
     }
@@ -670,7 +700,8 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
             const content = disabled
               ? importDoc
               : (tryRehydrate(importDoc) || importDoc);
-            await writeFile(outBase + importExt, JSON.stringify(content, null, 2));
+            const wrote = await writeAssetImport(outBase + importExt, content, className);
+            if (wrote === false) return false;
           }
           importRecovered = true;
           logger.debug(`redirect: [${cfg.name}] ${uuid} <- ${redirectInfo.depName}`);
@@ -720,7 +751,8 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, bundleRegistry
       const content = disabled
         ? section
         : (tryRehydrate(section) || section);
-      await writeFile(outBase + importExt, JSON.stringify(content, null, 2));
+      const wrote = await writeAssetImport(outBase + importExt, content, className);
+      if (wrote === false) return false;
       importPackRef = { packUuid, position };
       importRecovered = true;
     }
