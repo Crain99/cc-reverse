@@ -63,6 +63,43 @@ describe('jscDecryptor', () => {
       const key = extractKeyFromProject(tmpDir);
       expect(key).toBeNull();
     });
+
+    test('should extract key from 3.x application.js', () => {
+      fs.writeFileSync(path.join(tmpDir, 'application.js'), `
+        System.register(function () {
+          var xxteaKey = "app-level-key-987654";
+        });
+      `);
+      const key = extractKeyFromProject(tmpDir);
+      expect(key).toBe('app-level-key-987654');
+    });
+
+    test('should extract key from 3.x src/settings.json', () => {
+      fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, 'src', 'settings.json'),
+        JSON.stringify({ assets: {}, xxteaKey: 'settings-json-key-555' })
+      );
+      const key = extractKeyFromProject(tmpDir);
+      expect(key).toBe('settings-json-key-555');
+    });
+
+    test('should extract key from hashed src/settings.<hash>.json', () => {
+      fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, 'src', 'settings.abc123.json'),
+        JSON.stringify({ encryptKey: 'hashed-settings-key-444' })
+      );
+      const key = extractKeyFromProject(tmpDir);
+      expect(key).toBe('hashed-settings-key-444');
+    });
+
+    test('should extract key from setXXTEAKey call', () => {
+      fs.writeFileSync(path.join(tmpDir, 'main.js'),
+        `cc.sys.localStorage; jsb.fileUtils.setXXTEAKey('call-style-key-321');`);
+      const key = extractKeyFromProject(tmpDir);
+      expect(key).toBe('call-style-key-321');
+    });
   });
 
   describe('decryptJscBuffer', () => {
@@ -92,6 +129,22 @@ describe('jscDecryptor', () => {
       const encrypted = xxtea.encrypt(original, xxtea.toBytes(TEST_KEY));
       const result = decryptJscBuffer(encrypted, 'wrong-key-12345678');
       expect(result).toBeNull();
+    });
+
+    test('should reject garbage output that is not valid JS text', () => {
+      // Encrypt high-entropy binary, then decrypt with a different key so the
+      // output is non-text noise; it must be rejected rather than reported ok.
+      const binary = Buffer.from(Array.from({ length: 64 }, (_, i) => (i * 37) & 0xff));
+      const encrypted = xxtea.encrypt(binary, xxtea.toBytes(TEST_KEY));
+      const result = decryptJscBuffer(encrypted, 'another-wrong-key-99');
+      expect(result).toBeNull();
+    });
+
+    test('should accept correctly decrypted minified JS', () => {
+      const original = Buffer.from('!function(){var a=1,b=2;return a+b}();');
+      const encrypted = xxtea.encrypt(original, xxtea.toBytes(TEST_KEY));
+      const result = decryptJscBuffer(encrypted, TEST_KEY);
+      expect(result.toString('utf-8')).toBe('!function(){var a=1,b=2;return a+b}();');
     });
   });
 });

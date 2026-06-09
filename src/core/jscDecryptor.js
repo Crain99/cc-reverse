@@ -33,29 +33,62 @@ function scanJscFiles(dirPath) {
   return results;
 }
 
+// 可能内联 XXTEA 密钥的项目文件，按命中优先级排列。
+// 2.x 密钥通常在 main.js；3.x 在 application.js 或 src/settings.json。
+const KEY_FILE_CANDIDATES = [
+  'main.js',
+  'src/main.js',
+  'application.js',
+  'src/application.js',
+  'src/settings.json',
+  'src/project.js',
+  'project.js',
+  'index.js',
+  'game.js',
+];
+
+// 同时适配 `var k = '...'`、`k: '...'`、JSON `"k":"..."` 以及 setXXTEAKey('...')。
+const KEY_PATTERNS = [
+  /setXXTEAKey\s*\(\s*['"]([^'"]+)['"]\s*\)/,
+  /xxteaKey['"]?\s*[:=]\s*['"]([^'"]+)['"]/i,
+  /encrypt(?:ion)?Key['"]?\s*[:=]\s*['"]([^'"]+)['"]/i,
+  /XXTEA_KEY['"]?\s*[:=]\s*['"]([^'"]+)['"]/i,
+  /key\s*:\s*['"]([0-9a-f-]{16,})['"]/i,
+  /['"]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{2})['"]/i,
+];
+
 /**
- * 从项目文件中自动提取 XXTEA 密钥
+ * 从项目文件中自动提取 XXTEA 密钥。
+ * 覆盖 2.x（main.js）与 3.x（application.js / src/settings.json）布局。
  * @param {string} sourcePath 源项目路径
  * @returns {string|null} 密钥或 null
  */
 function extractKeyFromProject(sourcePath) {
-  const candidates = ['main.js', 'src/main.js'];
+  // src/settings.*.json 这类带 hash 的 3.x 配置也纳入扫描。
+  const candidates = [...KEY_FILE_CANDIDATES];
+  const srcDir = path.join(sourcePath, 'src');
+  if (fs.existsSync(srcDir)) {
+    try {
+      for (const f of fs.readdirSync(srcDir)) {
+        if (/^settings\..+\.json$/.test(f)) candidates.push(path.join('src', f));
+      }
+    } catch (e) {
+      // 目录不可读则忽略
+    }
+  }
 
   for (const candidate of candidates) {
     const filePath = path.join(sourcePath, candidate);
     if (!fs.existsSync(filePath)) continue;
 
-    const content = fs.readFileSync(filePath, 'utf-8');
+    let content;
+    try {
+      content = fs.readFileSync(filePath, 'utf-8');
+    } catch (e) {
+      continue;
+    }
 
-    const patterns = [
-      /xxteaKey\s*=\s*['"]([^'"]+)['"]/,
-      /encryptKey\s*=\s*['"]([^'"]+)['"]/,
-      /XXTEA_KEY\s*=\s*['"]([^'"]+)['"]/,
-      /key\s*:\s*['"]([0-9a-f-]{16,})['"]/i,
-      /['"]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{2})['"]/i,
-    ];
-
-    for (const pattern of patterns) {
+    for (const pattern of KEY_PATTERNS) {
       const match = content.match(pattern);
       if (match) {
         return match[1];
@@ -67,20 +100,52 @@ function extractKeyFromProject(sourcePath) {
 }
 
 /**
- * 解密单个 JSC 文件数据
+ * 启发式判断缓冲区是否为文本（JavaScript 源码）。
+ * 正确解密的 .jsc 是 JS 源码；错误密钥产出的是高熵二进制乱码。
+ * @param {Buffer} buf
+ * @returns {boolean}
+ */
+function looksLikeText(buf) {
+  const n = Math.min(buf.length, 512);
+  if (n === 0) return false;
+  let printable = 0;
+  for (let i = 0; i < n; i += 1) {
+    const b = buf[i];
+    // 制表/换行/回车 或 可打印 ASCII 视为文本字符。
+    if (b === 9 || b === 10 || b === 13 || (b >= 32 && b < 127)) printable += 1;
+  }
+  return printable / n >= 0.85;
+}
+
+/**
+ * 解密单个 JSC 文件数据。
+ * 返回 null 表示解密失败（密钥错误或数据损坏），调用方据此计入失败而非误报成功。
  * @param {Buffer} data 文件数据
  * @param {string} key 解密密钥
  * @returns {Buffer|null} 解密后的数据或 null
  */
 function decryptJscBuffer(data, key) {
   const decrypted = xxtea.decrypt(data, xxtea.toBytes(key));
-  if (!decrypted) return null;
+  if (!decrypted || decrypted.length === 0) return null;
 
-  try {
-    return Buffer.from(pako.inflate(decrypted));
-  } catch (e) {
-    return Buffer.from(decrypted);
+  const buf = Buffer.from(decrypted);
+
+  // 按 magic 判断压缩格式：gzip(1f 8b) 或 zlib(78 ..)。
+  const isGzip = buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+  const isZlib = buf.length >= 2 && buf[0] === 0x78
+    && (buf[1] === 0x01 || buf[1] === 0x9c || buf[1] === 0xda);
+  if (isGzip || isZlib) {
+    try {
+      return Buffer.from(pako.inflate(buf));
+    } catch (e) {
+      // magic 声称已压缩却解压失败 → 密钥错误或数据损坏。
+      return null;
+    }
   }
+
+  // 未压缩：正确解密的 .jsc 应为 JS 源码文本，乱码则判为失败。
+  if (looksLikeText(buf)) return buf;
+  return null;
 }
 
 /**

@@ -15,21 +15,23 @@
  *     u8[chunkLen] data
  */
 
+const { decode: notepackDecode } = require('./notepack');
+
 const CCON_MAGIC = 0x4E4F4343;
 
 /**
  * Decode a CCON buffer.
  *
- * Version 1 files are returned fully decoded: `.document` is the parsed JSON
- * (an IFileData tuple).
+ * Version 1 files carry a JSON body; version 2 files carry a notepack
+ * (MessagePack) body. Both are returned fully decoded: `.document` is the
+ * parsed IFileData tuple.
  *
- * Version 2 files use a notepack body; we do not ship a notepack decoder yet,
- * so we return `{ version: 2, rawJson: <Buffer>, chunks: [...] }` and let the
- * caller decide whether to fail, or to hand the raw json buffer to an external
- * decoder.
+ * If a v2 body cannot be decoded (corrupt / unexpected format) we fall back to
+ * `{ version: 2, rawJson: <Buffer>, chunks: [...] }` so the caller can still
+ * persist the raw blob instead of losing it.
  *
  * @param {Buffer} buf
- * @returns {{ version: number, document: any, chunks: Buffer[], rawJson?: Buffer }}
+ * @returns {{ version: number, document?: any, chunks: Buffer[], rawJson?: Buffer }}
  */
 function decodeCcon(buf) {
   if (!Buffer.isBuffer(buf)) {
@@ -65,9 +67,18 @@ function decodeCcon(buf) {
   const rawJson = buf.slice(jsonStart, jsonEnd);
 
   let document = null;
+  let decodeError = null;
   if (version === 1) {
     const text = rawJson.toString('utf-8');
     document = JSON.parse(text);
+  } else if (version === 2) {
+    // v2 body is a notepack (MessagePack) blob.
+    try {
+      document = notepackDecode(rawJson);
+    } catch (e) {
+      decodeError = e;
+      document = null;
+    }
   }
 
   // Chunks follow, aligned to 8 bytes after the JSON blob.
@@ -96,7 +107,9 @@ function decodeCcon(buf) {
   if (document !== null) {
     result.document = document;
   } else {
+    // Couldn't decode (e.g. malformed v2 body) — keep the raw blob.
     result.rawJson = rawJson;
+    if (decodeError) result.decodeError = decodeError;
   }
   return result;
 }

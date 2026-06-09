@@ -611,15 +611,17 @@ function probeNativeExtension(doc) {
 
 async function decodeCconToDoc(buf, outBase) {
   const decoded = decodeCcon(buf);
-  if (decoded.version === 1 && decoded.document) {
+  // Both v1 (JSON) and v2 (notepack) yield a `document` when decodable.
+  if (decoded.document) {
     // Persist chunks alongside the JSON so mesh/animation payloads are not lost.
     for (let i = 0; i < decoded.chunks.length; i += 1) {
       await writeFile(`${outBase}.chunk${i}.bin`, decoded.chunks[i]);
     }
     return decoded.document;
   }
-  // V2 (notepack) — preserve raw blobs; we can't currently decode.
+  // Undecodable v2 body — preserve the raw blob so nothing is silently lost.
   if (decoded.rawJson) {
+    logger.warn(`CCON v2 body could not be decoded, kept raw: ${path.basename(outBase)}.ccon-v2.rawjson`);
     await writeFile(outBase + '.ccon-v2.rawjson', decoded.rawJson);
   }
   for (let i = 0; i < decoded.chunks.length; i += 1) {

@@ -58,7 +58,7 @@ async function reverseProject(options) {
       bundleFilter: Array.isArray(bundle) ? bundle : (bundle ? [bundle] : []),
       assetsOnly,
       scriptsOnly,
-      key: key || global.config.decrypt?.key,
+      key: key || global.config.decrypt?.key || extractKeyFromProject(sourcePath),
       verbose,
     });
   }

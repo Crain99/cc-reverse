@@ -24,10 +24,10 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - **支持 Spine 骨骼动画资源提取**（骨骼数据 + Atlas 图集 + 纹理）
 - **支持 DragonBones 骨骼动画资源提取**（骨骼数据 + 图集 + 纹理）
 - 生成符合 Cocos Creator 格式要求的项目文件
-- **支持 JSC 加密文件自动解密**（XXTEA + gzip，支持自动提取密钥）
+- **支持 JSC 加密文件自动解密**（XXTEA + gzip，自动提取密钥，覆盖 2.x `main.js` 与 3.x `application.js` / `src/settings.json`；按 magic 校验解密结果，错误密钥不再误报成功）
 - **支持 Cocos Creator 2.3.x / 2.4.x / 3.x 版本自动检测**
 - **3.x bundle 感知**：自动发现 `assets/main`、`assets/internal`、`assets/resources` 及自定义 bundle；按 `config.json` 还原每个资源的原始项目路径
-- **CCON 二进制解码**（`.cconb` / `.ccon` v1）：解析 magic、版本头与对齐 chunk
+- **CCON 二进制解码**（`.cconb` / `.ccon` v1 与 v2）：解析 magic、版本头与对齐 chunk；v2 的 notepack(MessagePack) body 也能解码还原
 - **脚本恢复**：2.x 把打包后的 `project.js` 拆分为每文件 `.ts`；3.x 复制 `src/chunks/*.js`（SystemJS 模块）
 
 ## 版本支持
@@ -46,7 +46,7 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - 文件结构：`application.js` + `src/settings.json` + `assets/<bundle>/config.json` + `src/chunks/*.js` + `cocos-js/`
 - 按 bundle 独立解析 `config.json`（`paths` + `uuids` + `types` + `versions` + `extensionMap`）
 - 资源按原始项目路径（`assets/main/scenes/Main.scene` 等）还原，并生成匹配的 `.meta`
-- 支持 **CCON v1**（JSON 内嵌 + 8 字节对齐 chunks）；v2（notepack）保留原始数据留给后续处理
+- 支持 **CCON v1**（JSON 内嵌 + 8 字节对齐 chunks）与 **CCON v2**（notepack/MessagePack body 解码为 JSON 文档；无法解码时回退保留 `.ccon-v2.rawjson`）
 - 加密：仅 bundle 级 `index.jsc`，可通过 `--key` 传入或从 `application.js` / `src/settings.json` 自动抽取
 - 使用 `--version-hint 3.x` 强制指定版本；`--bundle <name>` 只处理指定 bundle（可重复）
 
