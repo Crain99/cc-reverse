@@ -1,7 +1,8 @@
 const { decodeCcon, isCcon, CCON_MAGIC } = require('../../src/core/cocos3x/ccon');
+const { encode: encodeNotepack } = require('./notepack.test');
 
-function buildCcon({ version = 1, json = '{}', chunks = [] }) {
-  const jsonBuf = Buffer.from(json, 'utf-8');
+function buildCcon({ version = 1, json = '{}', body = null, chunks = [] }) {
+  const jsonBuf = body !== null ? body : Buffer.from(json, 'utf-8');
   const jsonLen = jsonBuf.length;
   const headerLen = 16;
   const alignedJsonEnd = ((headerLen + jsonLen) + 7) & ~7;
@@ -65,7 +66,15 @@ describe('decodeCcon', () => {
     expect(decoded.chunks[1].toString('utf-8')).toBe('beta');
   });
 
-  it('returns rawJson for v2 files', () => {
+  it('decodes a v2 file with a notepack body', () => {
+    const doc = { hello: 'world', nums: [1, 2, 3] };
+    const buf = buildCcon({ version: 2, body: encodeNotepack(doc) });
+    const decoded = decodeCcon(buf);
+    expect(decoded.version).toBe(2);
+    expect(decoded.document).toEqual(doc);
+  });
+
+  it('falls back to rawJson when a v2 body is not valid notepack', () => {
     const buf = buildCcon({ version: 2, json: 'notepack-payload' });
     const decoded = decodeCcon(buf);
     expect(decoded.version).toBe(2);
