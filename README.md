@@ -9,20 +9,6 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 
 > 💡 **想用自然语言驱动？** 试试配套的 Claude Code 插件 [cocos-reverse-engineering-skill](https://github.com/Crain99/cocos-reverse-engineering-skill) —— 一句 `/reverse-cocos path/to/build` 完成依赖检查 / 版本识别 / JSC 解密 / 反向 / 资源编目全流程。
 
-> 🚀 **AI API 网关：[996Token](https://996token.com/)（赞助）**
->
-> 统一提供 API Key 鉴权、余额计费、账号调度与请求转发。目前支持 OpenAI、Grok 线路，可接入兼容 OpenAI API 格式的开发工具和应用。
->
-> - 一个 API Key 统一调用
-> - Token 级用量统计与费用记录
-> - 多账号智能调度与负载均衡
-> - 支持破限，配合 [Cocos 逆向工程 Skill](https://github.com/Crain99/cocos-reverse-engineering-skill) 使用，逆向效果更佳
-> - 支付宝扫码充值
-> - 支持余额、订单及请求记录查询
-> - 注册时填写优惠码 `拒绝996`，注册成功即赠 **$3 额度**
->
-> [立即注册](https://996token.com/register) · [访问官网](https://996token.com/)
-
 ## 项目热度
 
 如果您觉得这个项目对您有帮助，请给我们一个 Star ⭐️，这是对我们最大的鼓励！
