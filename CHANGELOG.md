@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1] - 2026-07-23
+
+### Fixes
+- **Issue #31**: Support MD5 Cache bundle configs (`config.<hash>.json`) and hashed entry scripts (`main.<hash>.js`, etc.)
+- When `--version-hint 2.4.x` meets a 2.4/3.x bundle layout, route to the bundle pipeline so textures are restored as native files instead of import JSON
+- `extensionMap` entries may be uuid indexes; resolve them correctly
+
 ## [2.1.0] - 2026-07-23
 
 ### Features

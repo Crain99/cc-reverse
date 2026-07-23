@@ -1,6 +1,6 @@
 {
   "name": "cc-reverse",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Cocos Creator 逆向工程工具 (支持 2.3.x / 2.4.x / 3.x)：脚本拆包、资源还原、JSC 解密",
   "main": "src/index.js",
   "bin": {
