@@ -1,4 +1,11 @@
 __tests__/
+__fixtures__/
 .npm-cache/
 coverage/
 *.log
+*.tgz
+.git/
+.github/
+scripts/
+cc-reverse.config.js
+node_modules/

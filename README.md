@@ -42,7 +42,9 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 - **支持 Cocos Creator 2.3.x / 2.4.x / 3.x 版本自动检测**
 - **3.x bundle 感知**：自动发现 `assets/main`、`assets/internal`、`assets/resources` 及自定义 bundle；按 `config.json` 还原每个资源的原始项目路径
 - **CCON 二进制解码**（`.cconb` / `.ccon` v1 与 v2）：解析 magic、版本头与对齐 chunk；v2 的 notepack(MessagePack) body 也能解码还原
-- **脚本恢复**：2.x 把打包后的 `project.js` 拆分为每文件 `.ts`；3.x 复制 `src/chunks/*.js`（SystemJS 模块）
+- **脚本恢复**：2.x 把打包后的 `project.js` 拆分为每文件 `.ts`（browserify 切片 + AST 兜底，保留 `cc._RF` UUID 挂载）；3.x 复制 `src/chunks/*.js`（SystemJS 模块）
+- **2.x packed 资源还原**：按 `settings.packedAssets` 拆分场景 / 预制体 / SpriteFrame / 音频，并拷贝 `raw-assets`
+- **恢复报告**：输出目录生成 `RECOVERY_REPORT.md`（脚本格式、资源统计、3.x bundle 表）
 
 ## 版本支持
 

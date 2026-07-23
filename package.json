@@ -1,26 +1,44 @@
 {
   "name": "cc-reverse",
-  "version": "2.0.0",
-  "description": "Cocos Creator 逆向工程工具 (支持 2.3.x / 2.4.x / 3.x)",
+  "version": "2.1.0",
+  "description": "Cocos Creator 逆向工程工具 (支持 2.3.x / 2.4.x / 3.x)：脚本拆包、资源还原、JSC 解密",
   "main": "src/index.js",
   "bin": {
     "cc-reverse": "bin/cc-reverse.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "lint": "eslint src/**/*.js",
     "test": "jest",
-    "build": "node scripts/build.js"
+    "build": "node scripts/build.js",
+    "prepublishOnly": "npm test"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Crain99/cc-reverse.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Crain99/cc-reverse/issues"
+  },
+  "homepage": "https://github.com/Crain99/cc-reverse#readme",
   "keywords": [
     "cocos",
     "creator",
     "reverse",
     "engineering",
-    "extract"
+    "extract",
+    "jsc",
+    "xxtea"
   ],
-  "author": "",
+  "author": "Crain99",
   "license": "MIT",
   "devDependencies": {
     "eslint": "^8.47.0",
