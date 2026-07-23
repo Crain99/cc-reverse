@@ -70,11 +70,9 @@ async function reverseProject(options) {
   // 检查文件是否存在 (2.x pipeline)
   validatePaths(projectInfo.resPath, projectInfo.settingsPath, projectInfo.projectPath);
 
-  // 创建临时目录和输出目录
+  // 创建临时目录和输出目录（脚本恢复已改为内存切片，默认不再写 temp/ast）
   const tempPath = path.resolve(outputPath, 'temp');
-  const astPath = path.resolve(tempPath, 'ast');
   await fsp.mkdir(tempPath, { recursive: true });
-  await fsp.mkdir(astPath, { recursive: true });
   await fsp.mkdir(outputPath, { recursive: true });
 
   ctx.paths = {
@@ -82,7 +80,7 @@ async function reverseProject(options) {
     output: outputPath,
     res: projectInfo.resPath,
     temp: tempPath,
-    ast: astPath,
+    ast: null,
   };
   ctx.applyGlobals();
 

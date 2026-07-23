@@ -65,7 +65,7 @@ const fileManager = {
 
       let content;
       if (typeof data === 'object' && data !== null) {
-        content = JSON.stringify(data, null, 2);
+        content = safeJsonStringify(data, 2);
       } else {
         content = String(data);
       }
@@ -146,4 +146,26 @@ const fileManager = {
   },
 };
 
-module.exports = { fileManager };
+/**
+ * JSON.stringify that breaks cycles instead of throwing.
+ * Already-seen objects become {"__circular__": true}.
+ * Prefer resourceProcessor.toIdReferencedArray for Cocos scene graphs.
+ */
+function safeJsonStringify(value, space = 2) {
+  const seen = new WeakSet();
+  return JSON.stringify(
+    value,
+    (key, val) => {
+      if (val && typeof val === 'object') {
+        if (seen.has(val)) {
+          return { __circular__: true };
+        }
+        seen.add(val);
+      }
+      return val;
+    },
+    space,
+  );
+}
+
+module.exports = { fileManager, safeJsonStringify };
