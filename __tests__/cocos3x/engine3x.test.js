@@ -70,6 +70,47 @@ describe('reverseProject3x — end-to-end on a synthetic fixture', () => {
     return src;
   }
 
+  it('recovers assets when bundle config is MD5-hashed (config.<hash>.json)', async () => {
+    const src = path.join(tmp, 'md5-build');
+    writeFile(path.join(src, 'application.js'), '// launcher');
+    writeFile(path.join(src, 'src', 'settings.json'), '{}');
+
+    const bundleDir = path.join(src, 'assets', 'main');
+    const config = {
+      name: 'main',
+      debug: true,
+      importBase: 'import',
+      nativeBase: 'native',
+      uuids: ['u-tex'],
+      paths: { 0: ['textures/logo', 0] },
+      types: ['cc.Texture2D'],
+      scenes: {},
+      extensionMap: { '.png': ['u-tex'] },
+      versions: {
+        import: [0, 'h1'],
+        native: [0, 'h2'],
+      },
+    };
+    // Only hashed config — no config.json (Creator MD5 Cache)
+    writeFile(path.join(bundleDir, 'config.deadbeef.json'), JSON.stringify(config));
+    writeFile(
+      path.join(bundleDir, 'import', 'u-', 'u-tex.h1.json'),
+      JSON.stringify({ __type__: 'cc.Texture2D', _name: 'Logo' }),
+    );
+    writeFile(path.join(bundleDir, 'native', 'u-', 'u-tex.h2.png'), 'PNGDATA');
+
+    const out = path.join(tmp, 'out-md5');
+    const summary = await reverseProject3x({
+      sourcePath: src,
+      outputPath: out,
+      verbose: false,
+    });
+
+    expect(summary.bundles).toHaveLength(1);
+    expect(summary.bundles[0].recovered).toBeGreaterThanOrEqual(1);
+    expect(fs.existsSync(path.join(out, 'assets', 'main', 'textures', 'logo.png'))).toBe(true);
+  });
+
   it('recovers each bundle asset and script into the output tree', async () => {
     const src = buildFixture();
     const out = path.join(tmp, 'out');

@@ -1,5 +1,13 @@
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { parseBundleConfig, getImportPath, getNativePath } = require('../../src/core/cocos3x/bundleConfig');
+const {
+  parseBundleConfig,
+  getImportPath,
+  getNativePath,
+  findBundleConfigPath,
+  hasBundleConfig,
+} = require('../../src/core/cocos3x/bundleConfig');
 
 describe('parseBundleConfig', () => {
   const baseDir = '/fake/bundle/main';
@@ -102,5 +110,49 @@ describe('getImportPath / getNativePath', () => {
   it('returns null when uuid or ext missing', () => {
     expect(getNativePath(cfg, 'x', null)).toBeNull();
     expect(getNativePath(cfg, null, '.png')).toBeNull();
+  });
+});
+
+describe('findBundleConfigPath / hasBundleConfig (MD5 Cache)', () => {
+  let tmp;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-bundle-cfg-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('prefers plain config.json', () => {
+    fs.writeFileSync(path.join(tmp, 'config.json'), '{}');
+    fs.writeFileSync(path.join(tmp, 'config.abc.json'), '{}');
+    expect(findBundleConfigPath(tmp)).toBe(path.join(tmp, 'config.json'));
+    expect(hasBundleConfig(tmp)).toBe(true);
+  });
+
+  it('falls back to config.<hash>.json when plain missing', () => {
+    fs.writeFileSync(path.join(tmp, 'config.a1b2c3d4.json'), '{"name":"main"}');
+    const found = findBundleConfigPath(tmp);
+    expect(found).toBe(path.join(tmp, 'config.a1b2c3d4.json'));
+    expect(hasBundleConfig(tmp)).toBe(true);
+  });
+
+  it('returns null when no config present', () => {
+    fs.writeFileSync(path.join(tmp, 'index.js'), '//');
+    expect(findBundleConfigPath(tmp)).toBeNull();
+    expect(hasBundleConfig(tmp)).toBe(false);
+  });
+
+  it('resolves extensionMap entries that are uuid indexes', () => {
+    const raw = {
+      name: 'main',
+      debug: true,
+      uuids: ['u0', 'u1'],
+      extensionMap: { '.png': [1] },
+    };
+    const cfg = parseBundleConfig(raw, '/b');
+    expect(cfg.extensionMap.u1).toBe('.png');
+    expect(cfg.extensionMap.u0).toBeUndefined();
   });
 });

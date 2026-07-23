@@ -215,26 +215,10 @@ function detectProjectVersion(sourcePath, versionHint) {
 
   const uniqueCandidateRoots = [...new Set(candidateRoots)];
 
-  function buildPaths(basePath) {
-    return {
-      settings: [
-        path.resolve(basePath, 'main.js'),
-        path.resolve(basePath, 'settings.js'),
-        path.resolve(basePath, 'src/settings.js'),
-      ],
-      project: [
-        path.resolve(basePath, 'project.js'),
-        path.resolve(basePath, 'main.js'),
-        path.resolve(basePath, 'src/project.js'),
-      ],
-      res: [
-        path.resolve(basePath, 'assets'),
-        path.resolve(basePath, 'res'),
-        path.resolve(basePath, 'src/assets'),
-      ],
-    };
-  }
-
+  /**
+   * Find first existing path, or first match of a basename regex under a dir.
+   * Used for MD5 Cache builds: main.<hash>.js / settings.<hash>.js / project.<hash>.js
+   */
   function findExistingPath(pathArray) {
     for (const filePath of pathArray) {
       if (fs.existsSync(filePath)) {
@@ -244,13 +228,79 @@ function detectProjectVersion(sourcePath, versionHint) {
     return null;
   }
 
-  function tryLayout(root, layout) {
-    const settings = findExistingPath(layout.settings);
-    const project = findExistingPath(layout.project);
-    const res = findExistingPath(layout.res);
+  function findHashedFile(dir, pattern) {
+    if (!fs.existsSync(dir)) return null;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      return null;
+    }
+    const hit = entries.find((name) => pattern.test(name));
+    return hit ? path.join(dir, hit) : null;
+  }
+
+  /**
+   * Resolve a classic entry file, including Creator MD5 Cache renames:
+   * main.js → main.<hash>.js, settings.js → settings.<hash>.js, etc.
+   */
+  function resolveEntry(root, { plainPaths, searchDirs, hashedRegexes }) {
+    const plain = findExistingPath(plainPaths.map((p) => path.resolve(root, p)));
+    if (plain) return plain;
+    for (const relDir of searchDirs) {
+      const dir = path.resolve(root, relDir);
+      for (const re of hashedRegexes) {
+        const hit = findHashedFile(dir, re);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  }
+
+  function tryClassicLayout(root, version) {
+    let settings;
+    let project;
+    let resList;
+
+    if (version === '2.3.x') {
+      settings = resolveEntry(root, {
+        plainPaths: ['src/settings.js'],
+        searchDirs: ['src'],
+        hashedRegexes: [/^settings\.[^/\\]+\.js$/i],
+      });
+      project = resolveEntry(root, {
+        plainPaths: ['src/project.js'],
+        searchDirs: ['src'],
+        hashedRegexes: [/^project\.[^/\\]+\.js$/i],
+      });
+      resList = [path.resolve(root, 'res')];
+    } else {
+      // 2.4.x classic
+      settings = resolveEntry(root, {
+        plainPaths: ['main.js', 'settings.js', 'src/settings.js', 'src/main.js'],
+        searchDirs: ['.', 'src'],
+        hashedRegexes: [/^settings\.[^/\\]+\.js$/i, /^main\.[^/\\]+\.js$/i],
+      });
+      project = resolveEntry(root, {
+        plainPaths: ['project.js', 'main.js', 'src/project.js', 'src/main.js'],
+        searchDirs: ['.', 'src'],
+        hashedRegexes: [/^project\.[^/\\]+\.js$/i, /^main\.[^/\\]+\.js$/i],
+      });
+      resList = [
+        path.resolve(root, 'assets'),
+        path.resolve(root, 'res'),
+        path.resolve(root, 'src/assets'),
+      ];
+    }
+
+    if (sourceBasename === 'assets' || sourceBasename === 'res') {
+      resList = [normalizedSourcePath, ...resList];
+    }
+    const res = findExistingPath(resList);
+
     if (settings && project && res) {
       return {
-        version: layout.version,
+        version,
         settingsPath: settings,
         projectPath: project,
         resPath: res,
@@ -259,52 +309,41 @@ function detectProjectVersion(sourcePath, versionHint) {
     return null;
   }
 
-  function is3xRoot(root) {
-    const candidates = [
-      path.join(root, 'assets', 'main', 'config.json'),
-      path.join(root, 'assets', 'internal', 'config.json'),
-      path.join(root, 'assets', 'resources', 'config.json'),
+  /**
+   * Bundle-style builds (Creator 2.4+ MD5 / 3.x): assets/<bundle>/config.json
+   * or config.<hash>.json. These must use the bundle pipeline, not classic 2.x.
+   */
+  function isBundleRoot(root) {
+    const markers = [
       path.join(root, 'application.js'),
       path.join(root, 'src', 'settings.json'),
     ];
-    if (candidates.some((p) => fs.existsSync(p))) return true;
+    if (markers.some((p) => fs.existsSync(p))) return true;
+    // hashed application / settings
+    if (findHashedFile(root, /^application\.[^/\\]+\.js$/i)) return true;
+    if (findHashedFile(path.join(root, 'src'), /^settings\.[^/\\]+\.json$/i)) return true;
 
     const assetsDir = path.join(root, 'assets');
-    if (fs.existsSync(assetsDir)) {
-      try {
-        const entries = fs.readdirSync(assetsDir, { withFileTypes: true });
-        for (const e of entries) {
-          if (!e.isDirectory()) continue;
-          if (fs.existsSync(path.join(assetsDir, e.name, 'config.json'))) return true;
-        }
-      } catch {
-        // ignore
+    if (!fs.existsSync(assetsDir)) return false;
+    try {
+      const entries = fs.readdirSync(assetsDir, { withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        const bundleDir = path.join(assetsDir, e.name);
+        // plain or hashed config
+        if (fs.existsSync(path.join(bundleDir, 'config.json'))) return true;
+        if (findHashedFile(bundleDir, /^config\.[^/\\]+\.json$/i)) return true;
       }
+    } catch {
+      // ignore
     }
     return false;
   }
 
-  function layout24x(root) {
-    const paths = buildPaths(root);
-    if (sourceBasename === 'assets' || sourceBasename === 'res') {
-      paths.res = [normalizedSourcePath, ...paths.res];
-    }
-    return { version: '2.4.x', ...paths };
-  }
-
-  function layout23x(root) {
-    return {
-      version: '2.3.x',
-      settings: [path.resolve(root, 'src/settings.js')],
-      project: [path.resolve(root, 'src/project.js')],
-      res: [path.resolve(root, 'res')],
-    };
-  }
-
-  // Version hint: 3.x
+  // Version hint: 3.x → bundle pipeline
   if (versionHint === '3.x') {
     for (const root of uniqueCandidateRoots) {
-      if (is3xRoot(root)) {
+      if (isBundleRoot(root)) {
         logger.info('使用用户指定的Cocos Creator 3.x项目结构');
         return { version: '3.x', sourcePath: root };
       }
@@ -312,9 +351,19 @@ function detectProjectVersion(sourcePath, versionHint) {
     logger.warn('用户指定3.x版本，但未找到对应文件结构，尝试自动检测...');
   }
 
+  // Version hint: 2.4.x
+  // Prefer bundle layout when present (MD5 Cache / 2.4 bundle builds). Forcing
+  // the classic 2.x pipeline on those projects yields JSON "textures" and fails
+  // to parse config.<hash>.json — the root cause of issue #31.
   if (versionHint === '2.4.x') {
     for (const root of uniqueCandidateRoots) {
-      const hit = tryLayout(root, layout24x(root));
+      if (isBundleRoot(root)) {
+        logger.info('检测到 2.4.x/3.x bundle 结构（含 MD5 config），使用 bundle 解析管线');
+        return { version: '3.x', sourcePath: root };
+      }
+    }
+    for (const root of uniqueCandidateRoots) {
+      const hit = tryClassicLayout(root, '2.4.x');
       if (hit) {
         logger.info('使用用户指定的Cocos Creator 2.4.x项目结构');
         return hit;
@@ -323,7 +372,7 @@ function detectProjectVersion(sourcePath, versionHint) {
     logger.warn('用户指定2.4.x版本，但未找到对应文件结构，尝试自动检测...');
   } else if (versionHint === '2.3.x') {
     for (const root of uniqueCandidateRoots) {
-      const hit = tryLayout(root, layout23x(root));
+      const hit = tryClassicLayout(root, '2.3.x');
       if (hit) {
         logger.info('使用用户指定的Cocos Creator 2.3.x项目结构');
         return hit;
@@ -332,26 +381,26 @@ function detectProjectVersion(sourcePath, versionHint) {
     logger.warn('用户指定2.3.x版本，但未找到对应文件结构，尝试自动检测...');
   }
 
-  // Auto-detect 3.x first
+  // Auto-detect bundle style first (3.x and 2.4 MD5 / bundle)
   for (const root of uniqueCandidateRoots) {
-    if (is3xRoot(root)) {
-      logger.info('自动检测到Cocos Creator 3.x项目结构');
+    if (isBundleRoot(root)) {
+      logger.info('自动检测到Cocos Creator bundle 项目结构 (3.x / 2.4.x MD5)');
       return { version: '3.x', sourcePath: root };
     }
   }
 
   // 2.3.x (更精确)
   for (const root of uniqueCandidateRoots) {
-    const hit = tryLayout(root, layout23x(root));
+    const hit = tryClassicLayout(root, '2.3.x');
     if (hit) {
       logger.info('自动检测到Cocos Creator 2.3.x或更早版本项目结构');
       return hit;
     }
   }
 
-  // 2.4.x
+  // classic 2.4.x
   for (const root of uniqueCandidateRoots) {
-    const hit = tryLayout(root, layout24x(root));
+    const hit = tryClassicLayout(root, '2.4.x');
     if (hit) {
       logger.info('自动检测到Cocos Creator 2.4.x项目结构');
       return hit;
@@ -360,9 +409,9 @@ function detectProjectVersion(sourcePath, versionHint) {
 
   throw new Error(`无法检测到有效的Cocos Creator项目结构，请检查输入路径是否正确。
 支持的文件结构：
-3.x:   assets/<bundle>/config.json (或 application.js + src/settings.json)
-2.4.x: main.js + settings.js + assets/res目录
-2.3.x: src/settings.js + src/project.js + res目录`);
+3.x / 2.4 bundle: assets/<bundle>/config.json 或 config.<hash>.json
+2.4.x classic: main.js|main.<hash>.js + assets/res
+2.3.x: src/settings.js|settings.<hash>.js + src/project.js + res/`);
 }
 
 /**

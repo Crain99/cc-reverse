@@ -23,7 +23,13 @@ const vm = require('vm');
 const { logger } = require('../../utils/logger');
 const { uuidUtils } = require('../../utils/uuidUtils');
 const { forEachPool, getMaxParallel } = require('../../utils/asyncPool');
-const { parseBundleConfig, getImportPath, getNativePath } = require('./bundleConfig');
+const {
+  parseBundleConfig,
+  getImportPath,
+  getNativePath,
+  findBundleConfigPath,
+  hasBundleConfig,
+} = require('./bundleConfig');
 const { isCcon, decodeCcon } = require('./ccon');
 const { inspect } = require('./deserializer');
 const { rehydrateIFileData } = require('./rehydrate');
@@ -225,8 +231,8 @@ function parseCCSettingsScript(text) {
 }
 
 /**
- * Walk <buildRoot>/assets for subdirectories that contain a config.json.
- * Also checks <buildRoot>/subpackages for mini-game subpackages.
+ * Walk <buildRoot>/assets for subdirectories that contain config.json
+ * (or MD5-cache config.<hash>.json). Also checks subpackages/.
  */
 async function discoverBundles(sourcePath) {
   const bundles = [];
@@ -245,8 +251,7 @@ async function discoverBundles(sourcePath) {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const bundleDir = path.join(root, entry.name);
-      const cfgPath = path.join(bundleDir, 'config.json');
-      if (fs.existsSync(cfgPath)) bundles.push(bundleDir);
+      if (hasBundleConfig(bundleDir)) bundles.push(bundleDir);
     }
   }
   return bundles;
@@ -256,7 +261,13 @@ async function discoverBundles(sourcePath) {
  * Unpack a single bundle. Returns a summary record.
  */
 async function unpackBundle({ bundleDir, outputPath, verbose }) {
-  const cfgPath = path.join(bundleDir, 'config.json');
+  const cfgPath = findBundleConfigPath(bundleDir);
+  if (!cfgPath) {
+    throw new Error(`No config.json / config.<hash>.json in ${bundleDir}`);
+  }
+  if (verbose && path.basename(cfgPath) !== 'config.json') {
+    logger.debug(`Using hashed bundle config: ${path.basename(cfgPath)}`);
+  }
   const raw = JSON.parse(await readFile(cfgPath, 'utf-8'));
   const cfg = parseBundleConfig(raw, bundleDir);
 

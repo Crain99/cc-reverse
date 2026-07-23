@@ -77,7 +77,8 @@ function parseBundleConfig(raw, baseDir) {
     });
   }
 
-  // Extension map: { ".png": [uuid(compressed), ...] }
+  // Extension map: { ".png": [uuid | uuidIndex, ...] }
+  // Creator may store compressed uuids, full uuids, or indexes into uuids[].
   const rawExtMap = raw.extensionMap && typeof raw.extensionMap === 'object'
     ? raw.extensionMap : {};
   const extensionMap = {};
@@ -85,7 +86,12 @@ function parseBundleConfig(raw, baseDir) {
     const list = rawExtMap[ext];
     if (!Array.isArray(list)) continue;
     for (const c of list) {
-      const uuid = debug ? c : uuidUtils.decodeUuid(c);
+      let uuid = null;
+      if (typeof c === 'number' || (typeof c === 'string' && /^\d+$/.test(c))) {
+        uuid = uuids[parseInt(c, 10)];
+      } else if (typeof c === 'string') {
+        uuid = debug ? c : uuidUtils.decodeUuid(c);
+      }
       if (uuid) extensionMap[uuid] = ext;
     }
   }
@@ -168,4 +174,44 @@ function getNativePath(cfg, uuid, ext) {
   return path.join(cfg.baseDir, cfg.nativeBase, uuid.slice(0, 2), name);
 }
 
-module.exports = { parseBundleConfig, getImportPath, getNativePath };
+/**
+ * Locate a bundle's config file. Supports plain `config.json` and MD5-cache
+ * names like `config.a1b2c3d4.json` (Creator "MD5 Cache" build option).
+ *
+ * @param {string} bundleDir
+ * @param {{ readdirSync?: Function, existsSync?: Function }} [fsLike]
+ * @returns {string|null} absolute path to config file
+ */
+function findBundleConfigPath(bundleDir, fsLike) {
+  const fsMod = fsLike || require('fs');
+  const plain = path.join(bundleDir, 'config.json');
+  if (fsMod.existsSync(plain)) return plain;
+
+  let entries;
+  try {
+    entries = fsMod.readdirSync(bundleDir);
+  } catch {
+    return null;
+  }
+  // Prefer the shortest/most standard match; usually only one config.*.json
+  const hashed = entries
+    .filter((name) => /^config\.[^/\\]+\.json$/i.test(name))
+    .sort((a, b) => a.length - b.length || a.localeCompare(b));
+  if (hashed.length > 0) return path.join(bundleDir, hashed[0]);
+  return null;
+}
+
+/**
+ * True if directory looks like a Creator bundle (has config.json or config.<hash>.json).
+ */
+function hasBundleConfig(bundleDir, fsLike) {
+  return !!findBundleConfigPath(bundleDir, fsLike);
+}
+
+module.exports = {
+  parseBundleConfig,
+  getImportPath,
+  getNativePath,
+  findBundleConfigPath,
+  hasBundleConfig,
+};
