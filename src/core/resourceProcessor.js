@@ -66,6 +66,8 @@ const resourceProcessor = {
       this.buildSettingsIndex();
 
       await this.readFiles(global.paths.res, true);
+      // rawAssets may point at prefabs/textures not covered by packed imports
+      await this.processStandaloneRawAssets();
       await this.convertToOutputFiles();
       await this.flushWrites();
 
@@ -95,6 +97,7 @@ const resourceProcessor = {
     this._packedMap = {};
     this._rawAssetMap = new Map();
     this._handledUuids = new Set();
+    this._labelAtlasCount = 0;
     this.initHandlers();
   },
 
@@ -809,6 +812,7 @@ const resourceProcessor = {
       subMetas: {},
     });
     this._handledUuids.add(String(uuid));
+    this._labelAtlasCount = (this._labelAtlasCount || 0) + 1;
   },
 
   /**
@@ -1141,6 +1145,94 @@ const resourceProcessor = {
     }
     this.cacheReadList.push(sourcePath);
     this.cacheWriteList.push(targetPath);
+  },
+
+  /**
+   * Cover rawAssets entries that are not emitted via packed import walk
+   * (e.g. standalone prefab import/<uuid>.json, texture png only in raw-assets).
+   */
+  async processStandaloneRawAssets() {
+    const settings = this.getCCSettings();
+    const rawAssets = settings.rawAssets || {};
+    const assetTypes = Array.isArray(settings.assetTypes) ? settings.assetTypes : [];
+
+    for (const group of Object.keys(rawAssets)) {
+      const table = rawAssets[group] || {};
+      for (const key of Object.keys(table)) {
+        const entry = table[key];
+        if (!Array.isArray(entry) || entry.length < 2) continue;
+
+        const relPath = entry[0];
+        const typeName = assetTypes[entry[1]] || null;
+        const compact = this.expandUuidRef(key);
+        const uuid = this.decodeMaybe(compact) || String(compact);
+
+        if (this._handledUuids.has(String(uuid)) || this._handledUuids.has(String(compact))) {
+          continue;
+        }
+
+        // Standalone prefab import document named by full uuid
+        if (typeName === 'cc.Prefab' || (relPath && /\.prefab$/i.test(relPath))) {
+          const importPath = this.findImportJsonByUuid(uuid, compact);
+          if (importPath) {
+            try {
+              const doc = JSON.parse(await fsp.readFile(importPath, 'utf-8'));
+              if (Array.isArray(doc)) {
+                this.processDocumentArray(doc, uuid);
+              }
+            } catch (err) {
+              logger.warn(`独立 prefab 读取失败 ${importPath}: ${err.message}`);
+            }
+          }
+          continue;
+        }
+
+        // Native-only textures / images listed in rawAssets
+        if (typeName === 'cc.Texture2D' || (relPath && /\.(png|jpe?g|webp)$/i.test(relPath))) {
+          const ext = path.extname(relPath) || '.png';
+          const src = this.findNativeFile(uuid, compact, ext);
+          if (src) {
+            const base = path.basename(relPath);
+            const sub = path.dirname(relPath).replace(/\\/g, '/');
+            const dir = sub && sub !== '.' ? path.posix.join('Texture', sub) : 'Texture';
+            this.queueCopy(src, path.join(global.paths.output, 'assets', dir, base));
+            this._handledUuids.add(String(uuid));
+          }
+        }
+      }
+    }
+  },
+
+  /**
+   * Locate import/<xx>/<uuid>.json for a decoded or compact uuid.
+   */
+  findImportJsonByUuid(decoded, compact) {
+    const resRoot = global.paths && global.paths.res;
+    if (!resRoot) return null;
+
+    const candidates = [];
+    const add = (id) => {
+      if (!id) return;
+      const s = String(id);
+      candidates.push(s);
+      if (s.length === 22) {
+        const d = uuidUtils.decodeUuid(s);
+        if (d) candidates.push(d);
+      }
+    };
+    add(decoded);
+    add(compact);
+
+    for (const id of candidates) {
+      const prefix = id.slice(0, 2);
+      const probe = path.join(resRoot, 'import', prefix, `${id}.json`);
+      if (fs.existsSync(probe)) return probe;
+      // Also accept short-hash import keys already in fileMap
+      if (this.fileMap.has(id) && this.fileMap.get(id).endsWith('.json')) {
+        return this.fileMap.get(id);
+      }
+    }
+    return null;
   },
 
   async convertToOutputFiles() {

@@ -25,7 +25,7 @@ const codeAnalyzer = {
       const result = await recoverScripts2x(code, {
         outputPath: options.outputPath || (global.paths && global.paths.output),
         verbose: options.verbose || global.verbose,
-        forceFormat: options.forceFormat,
+        forceFormat: options.forceFormat || options.scriptFormat,
         noAstFallback: options.noAstFallback,
       });
       logger.info('代码分析完成');

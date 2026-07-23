@@ -106,8 +106,12 @@ npm start -- --path <源项目路径>
   --bundle <name>          仅处理指定 bundle (3.x，可重复)
   --assets-only            跳过脚本阶段
   --scripts-only           跳过资源阶段
+  --script-format <format> 强制脚本包格式 (browserify|webpack|cocos-rf|unknown)
+  --no-ast-fallback        脚本切片失败时不回退全量 AST
   -h, --help               显示帮助信息
 ```
+
+输出目录会生成 `RECOVERY_REPORT.md`（脚本格式/提取器、资源统计、3.x bundle 表等）。
 
 ### 示例
 
@@ -120,6 +124,9 @@ cc-reverse --path ./games/sample-game --output ./extracted-game
 
 # 显示详细日志
 cc-reverse --path ./games/sample-game --verbose
+
+# 强制 browserify 切片，失败不走 AST
+cc-reverse --path ./games/sample-game --script-format browserify --no-ast-fallback
 
 # 静默模式
 cc-reverse --path ./games/sample-game --silent

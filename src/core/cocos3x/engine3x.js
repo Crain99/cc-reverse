@@ -28,6 +28,7 @@ const { isCcon, decodeCcon } = require('./ccon');
 const { inspect } = require('./deserializer');
 const { rehydrateIFileData } = require('./rehydrate');
 const { writeCocos2xProject } = require('./projectScaffold');
+const { writeRecoveryReport } = require('../../utils/recoveryReport');
 
 const readFile = fsp.readFile;
 const writeFile = fsp.writeFile;
@@ -150,7 +151,7 @@ async function reverseProject3x(options) {
     await writeProjectDescriptor(outputPath);
   }
 
-  await writeRecoveryReport(outputPath, summary, sourcePath);
+  summary.reportPath = await writeRecoveryReport(outputPath, summary, sourcePath);
   return summary;
 }
 
@@ -858,35 +859,6 @@ async function writeProjectDescriptor(outputPath) {
   );
 }
 
-async function writeRecoveryReport(outputPath, summary, sourcePath) {
-  const lines = [];
-  lines.push('# Recovery Report');
-  lines.push('');
-  lines.push(`- Input: \`${sourcePath}\``);
-  lines.push(`- Engine: ${summary.engine}`);
-  lines.push('');
-  lines.push('## Bundles');
-  lines.push('');
-  if (summary.bundles.length === 0) {
-    lines.push('_No bundles recovered._');
-  } else {
-    lines.push('| Name | Encrypted | UUIDs | Paths | Recovered | Missing |');
-    lines.push('| --- | --- | --- | --- | --- | --- |');
-    for (const b of summary.bundles) {
-      lines.push(`| ${b.name} | ${b.encrypted ? 'yes' : 'no'} | ${b.uuidCount} | ${b.pathCount} | ${b.recovered} | ${b.missing} |`);
-    }
-  }
-  lines.push('');
-  lines.push(`## Scripts`);
-  lines.push('');
-  lines.push(`- Files recovered: ${summary.scripts.total}`);
-  if (summary.warnings.length) {
-    lines.push('');
-    lines.push('## Warnings');
-    lines.push('');
-    for (const w of summary.warnings) lines.push(`- ${w}`);
-  }
-  await writeFile(path.join(outputPath, 'RECOVERY_REPORT.md'), lines.join('\n'));
-}
+// writeRecoveryReport imported from ../../utils/recoveryReport
 
 module.exports = { reverseProject3x, discoverBundles };

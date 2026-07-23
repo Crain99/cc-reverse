@@ -15,11 +15,12 @@ const { loadConfig } = require('../config/configLoader');
 const { decryptProject, scanJscFiles, extractKeyFromProject } = require('./jscDecryptor');
 const { reverseProject3x } = require('./cocos3x/engine3x');
 const { ReverseContext } = require('./context');
+const { writeRecoveryReport } = require('../utils/recoveryReport');
 
 /**
  * 逆向工程主函数
  * @param {Object} options 配置选项
- * @returns {Promise<void>}
+ * @returns {Promise<object>} recovery summary
  */
 async function reverseProject(options) {
   const {
@@ -31,6 +32,8 @@ async function reverseProject(options) {
     bundle,
     assetsOnly = false,
     scriptsOnly = false,
+    scriptFormat = '',
+    noAstFallback = false,
   } = options;
 
   const config = loadConfig();
@@ -52,11 +55,20 @@ async function reverseProject(options) {
   ctx.version = projectInfo.version;
   ctx.applyGlobals();
 
+  const optionSummary = {
+    versionHint: versionHint || '',
+    scriptFormat: scriptFormat || 'auto',
+    noAstFallback: !!noAstFallback,
+    assetsOnly: !!assetsOnly,
+    scriptsOnly: !!scriptsOnly,
+    bundle: Array.isArray(bundle) ? bundle : [],
+  };
+
   // 3.x pipeline is bundle-oriented — dispatch early.
   if (projectInfo.version === '3.x') {
     ctx.paths = { source: sourcePath, output: outputPath };
     ctx.applyGlobals();
-    return reverseProject3x({
+    const summary3x = await reverseProject3x({
       sourcePath,
       outputPath,
       bundleFilter: ctx.bundleFilter,
@@ -65,6 +77,10 @@ async function reverseProject(options) {
       key: key || config.decrypt?.key || extractKeyFromProject(sourcePath),
       verbose,
     });
+    summary3x.options = optionSummary;
+    // Re-write report so options/flavor land in the shared template
+    summary3x.reportPath = await writeRecoveryReport(outputPath, summary3x, sourcePath);
+    return summary3x;
   }
 
   // 检查文件是否存在 (2.x pipeline)
@@ -84,6 +100,15 @@ async function reverseProject(options) {
   };
   ctx.applyGlobals();
 
+  const summary = {
+    engine: projectInfo.version,
+    version: projectInfo.version,
+    scripts: null,
+    assets: null,
+    warnings: [],
+    options: optionSummary,
+  };
+
   // JSC 解密预处理
   const jscFiles = scanJscFiles(sourcePath);
   let codePath = sourcePath;
@@ -97,6 +122,7 @@ async function reverseProject(options) {
       codePath = decryptOutputDir;
     } else {
       logger.warn('发现 .jsc 文件但未提供密钥，请使用 --key 参数指定密钥');
+      summary.warnings.push('Found .jsc files but no decrypt key was provided');
     }
   }
 
@@ -119,20 +145,52 @@ async function reverseProject(options) {
     ctx.settings = parseSettings(settings, projectInfo.version);
     ctx.applyGlobals();
 
-    logger.info('开始分析代码...');
-    await codeAnalyzer.analyze(code);
+    if (!assetsOnly) {
+      logger.info('开始分析代码...');
+      const scriptResult = await codeAnalyzer.analyze(code, {
+        forceFormat: scriptFormat || undefined,
+        noAstFallback,
+        verbose,
+        outputPath,
+      });
+      summary.scripts = {
+        total: scriptResult?.written ?? 0,
+        modules: scriptResult?.modules ?? 0,
+        written: scriptResult?.written ?? 0,
+        failed: scriptResult?.failed ?? 0,
+        format: scriptResult?.format,
+        extractor: scriptResult?.extractor,
+      };
+    } else {
+      summary.scripts = { total: 0, skipped: true };
+    }
 
-    logger.info('开始处理资源...');
-    await resourceProcessor.processResources();
+    if (!scriptsOnly) {
+      logger.info('开始处理资源...');
+      await resourceProcessor.processResources();
+      summary.assets = {
+        scenes: resourceProcessor.sceneAssets.length,
+        prefabs: resourceProcessor.prefabs.length,
+        sprites: Object.keys(resourceProcessor.spriteFrames).length,
+        audio: resourceProcessor.audio.length,
+        animations: resourceProcessor.animation.length,
+        copies: resourceProcessor.cacheReadList.length,
+        labelAtlas: (resourceProcessor._labelAtlasCount || 0),
+      };
+    } else {
+      summary.assets = { skipped: true };
+    }
 
     logger.info('生成项目文件...');
     await projectGenerator.generateProject();
+
+    summary.reportPath = await writeRecoveryReport(outputPath, summary, sourcePath);
 
     if (!verbose) {
       await fileManager.cleanDirectory(tempPath);
     }
 
-    return true;
+    return summary;
   } catch (err) {
     logger.error('处理项目文件时出错:', err);
     throw err;

@@ -6,7 +6,7 @@ const path = require('path');
 const { program } = require('commander');
 const { version } = require('../package.json');
 const { reverseProject } = require('./core/reverseEngine');
-const { logger } = require('./utils/logger');
+const { logger, LogLevel } = require('./utils/logger');
 
 // 配置命令行参数
 program
@@ -21,6 +21,8 @@ program
   .option('--bundle <name>', '仅处理指定 bundle (3.x, 可重复)', collectList, [])
   .option('--assets-only', '跳过脚本阶段')
   .option('--scripts-only', '跳过资源阶段')
+  .option('--script-format <format>', '强制脚本包格式 (browserify|webpack|cocos-rf|unknown)')
+  .option('--no-ast-fallback', '脚本切片失败时不回退全量 AST')
   .parse(process.argv);
 
 function collectList(value, previous) {
@@ -28,6 +30,13 @@ function collectList(value, previous) {
 }
 
 const options = program.opts();
+
+if (options.verbose) {
+  logger.setLevel(LogLevel.DEBUG);
+}
+if (options.silent) {
+  logger.setSilent(true);
+}
 
 // 通过命令行参数或环境变量获取路径
 const sourcePath = options.path || process.env.CC_SOURCE_PATH;
@@ -37,11 +46,18 @@ if (!sourcePath) {
   process.exit(1);
 }
 
+const allowedFormats = new Set(['browserify', 'webpack', 'cocos-rf', 'unknown']);
+if (options.scriptFormat && !allowedFormats.has(options.scriptFormat)) {
+  logger.error(`错误: --script-format 无效: ${options.scriptFormat}`);
+  logger.info(`可选: ${[...allowedFormats].join(', ')}`);
+  process.exit(1);
+}
+
 // 开始逆向工程过程
 (async () => {
   try {
     logger.info('开始处理项目...');
-    await reverseProject({
+    const summary = await reverseProject({
       sourcePath: path.resolve(sourcePath),
       outputPath: path.resolve(options.output),
       verbose: options.verbose,
@@ -51,10 +67,16 @@ if (!sourcePath) {
       bundle: options.bundle,
       assetsOnly: options.assetsOnly,
       scriptsOnly: options.scriptsOnly,
+      // commander --no-ast-fallback → astFallback === false
+      noAstFallback: options.astFallback === false,
+      scriptFormat: options.scriptFormat || '',
     });
     logger.success('逆向工程完成！');
+    if (summary && summary.reportPath) {
+      logger.info(`恢复报告: ${summary.reportPath}`);
+    }
   } catch (err) {
     logger.error('处理过程中出错:', err);
     process.exit(1);
   }
-})(); 
+})();
