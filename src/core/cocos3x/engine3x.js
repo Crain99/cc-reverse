@@ -17,22 +17,24 @@
  *   5. Emit a minimal project.json so Cocos Creator 3.x recognises the output.
  */
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
-const { promisify } = require('util');
+const vm = require('vm');
 const { logger } = require('../../utils/logger');
 const { uuidUtils } = require('../../utils/uuidUtils');
+const { forEachPool, getMaxParallel } = require('../../utils/asyncPool');
 const { parseBundleConfig, getImportPath, getNativePath } = require('./bundleConfig');
 const { isCcon, decodeCcon } = require('./ccon');
 const { inspect } = require('./deserializer');
 const { rehydrateIFileData } = require('./rehydrate');
 const { writeCocos2xProject } = require('./projectScaffold');
 
-const readFile = promisify(fs.readFile);
-const writeFile = promisify(fs.writeFile);
-const mkdir = promisify(fs.mkdir);
-const copyFile = promisify(fs.copyFile);
-const readdir = promisify(fs.readdir);
-const stat = promisify(fs.stat);
+const readFile = fsp.readFile;
+const writeFile = fsp.writeFile;
+const mkdir = fsp.mkdir;
+const copyFile = fsp.copyFile;
+const readdir = fsp.readdir;
+const stat = fsp.stat;
 
 /**
  * Native extensions we know how to detect from a JSON document's `_native`
@@ -201,13 +203,22 @@ function detectProjectFlavor(sourcePath) {
 }
 
 function parseCCSettingsScript(text) {
-  // Evaluate in a sandbox: window._CCSettings = { ... };
+  // Evaluate in a vm sandbox: window._CCSettings = { ... };
   try {
-    const sandboxed = `let window = {}; ${text}; window`;
-    // eslint-disable-next-line no-eval
-    const result = eval(sandboxed);
-    return result._CCSettings || result.CCSettings || {};
+    const sandbox = { window: {} };
+    vm.createContext(sandbox);
+    vm.runInContext(text, sandbox, { timeout: 2000, displayErrors: false });
+    return sandbox.window._CCSettings || sandbox.window.CCSettings || {};
   } catch {
+    // Fallback: extract object literal
+    try {
+      const m = text.match(/(?:window\.)?_?CCSettings\s*=\s*(\{[\s\S]*\})\s*;?\s*$/);
+      if (m) {
+        return vm.runInNewContext(`(${m[1]})`, {}, { timeout: 1000 }) || {};
+      }
+    } catch {
+      // ignore
+    }
     return {};
   }
 }
@@ -224,17 +235,17 @@ async function discoverBundles(sourcePath) {
   ];
   for (const root of candidates) {
     if (!fs.existsSync(root)) continue;
-    const entries = await readdir(root);
+    let entries;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
     for (const entry of entries) {
-      const bundleDir = path.join(root, entry);
-      try {
-        const st = await stat(bundleDir);
-        if (!st.isDirectory()) continue;
-        const cfgPath = path.join(bundleDir, 'config.json');
-        if (fs.existsSync(cfgPath)) bundles.push(bundleDir);
-      } catch {
-        // ignore
-      }
+      if (!entry.isDirectory()) continue;
+      const bundleDir = path.join(root, entry.name);
+      const cfgPath = path.join(bundleDir, 'config.json');
+      if (fs.existsSync(cfgPath)) bundles.push(bundleDir);
     }
   }
   return bundles;
@@ -280,9 +291,11 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
   // Track which uuids we've already processed so we don't duplicate work when
   // a uuid appears in both `paths` and `scenes` and the catch-all uuids pass.
   const handled = new Set();
+  const concurrency = getMaxParallel();
 
   // 1) Named assets from config.paths — the user's project-visible tree.
-  for (const uuid of Object.keys(cfg.paths)) {
+  const pathUuids = Object.keys(cfg.paths);
+  await forEachPool(pathUuids, concurrency, async (uuid) => {
     const info = cfg.paths[uuid];
     try {
       const ok = await unpackAsset({
@@ -295,9 +308,10 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
       result.warnings.push(`${info.path}: ${err.message}`);
       logger.debug(`Asset ${uuid} (${info.path}) failed: ${err.message}`);
     }
-  }
+  });
 
   // 2) Scenes — often listed only under config.scenes, not under paths.
+  const sceneJobs = [];
   for (const sceneName of Object.keys(cfg.scenes)) {
     const uuid = cfg.scenes[sceneName];
     if (!uuid || handled.has(uuid)) continue;
@@ -306,7 +320,13 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
       .replace(/^db:\/\/(assets\/)?/, '')
       .replace(/\.(fire|scene)$/, '')
       || `scene/${uuid}`;
-    const info = { path: pathStr, type: 'cc.SceneAsset', subAsset: false };
+    sceneJobs.push({
+      uuid,
+      sceneName,
+      info: { path: pathStr, type: 'cc.SceneAsset', subAsset: false },
+    });
+  }
+  await forEachPool(sceneJobs, concurrency, async ({ uuid, sceneName, info }) => {
     try {
       const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose });
       handled.add(uuid);
@@ -315,13 +335,13 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
     } catch (err) {
       result.warnings.push(`scene ${sceneName}: ${err.message}`);
     }
-  }
+  });
 
   // 3) UUID-only assets (in uuids[] but not in paths/scenes). Typical for
   //    packed dependencies referenced by prefabs/scenes. Extract them under
   //    _packed/<2>/<uuid> so the editor can still resolve cross-asset refs.
-  for (const uuid of cfg.uuids) {
-    if (handled.has(uuid)) continue;
+  const packedJobs = cfg.uuids.filter((uuid) => !handled.has(uuid));
+  await forEachPool(packedJobs, concurrency, async (uuid) => {
     const info = {
       path: `_packed/${uuid.slice(0, 2)}/${uuid}`,
       type: null,
@@ -335,7 +355,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
       // These are often internal/packed — don't count as warnings.
       logger.debug(`Packed uuid ${uuid} skipped: ${err.message}`);
     }
-  }
+  });
 
   // Preserve the original config.json for reference — useful when a user wants
   // to re-pack or debug.
@@ -726,42 +746,50 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
     path.join(sourcePath, 'cocos-js'),
   ];
   const scriptsOut = path.join(outputPath, 'assets', 'Scripts');
+  const concurrency = getMaxParallel();
+  const copyJobs = [];
 
-  let total = 0;
   for (const dir of candidates) {
     if (!fs.existsSync(dir)) continue;
-    const entries = await readdir(dir);
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
     for (const entry of entries) {
-      if (!entry.endsWith('.js')) continue;
-      if (entry.startsWith('system.') || entry.startsWith('polyfills.')) continue;
-      if (entry === 'cc.js') continue;
-      const src = path.join(dir, entry);
-      const dest = path.join(scriptsOut, entry);
-      await mkdir(path.dirname(dest), { recursive: true });
-      await copyFile(src, dest);
-      await writeScriptMeta(dest);
-      if (verbose) logger.debug(`Script: ${entry}`);
-      total += 1;
+      if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+      if (entry.name.startsWith('system.') || entry.name.startsWith('polyfills.')) continue;
+      if (entry.name === 'cc.js') continue;
+      copyJobs.push({
+        src: path.join(dir, entry.name),
+        dest: path.join(scriptsOut, entry.name),
+        label: entry.name,
+      });
     }
   }
 
-  // Recursive walk of src/assets/ (WeChat mini-game "_plugs" / plugin SDKs
-  // live here as compiled .js files).
+  // Recursive walk of src/assets/ (WeChat mini-game "_plugs" / plugin SDKs)
   const srcAssets = path.join(sourcePath, 'src', 'assets');
   if (fs.existsSync(srcAssets)) {
     for await (const file of walkJsFiles(srcAssets)) {
       const rel = path.relative(srcAssets, file);
-      const dest = path.join(scriptsOut, 'plugs', rel);
-      await mkdir(path.dirname(dest), { recursive: true });
-      await copyFile(file, dest);
-      await writeScriptMeta(dest);
-      total += 1;
+      copyJobs.push({
+        src: file,
+        dest: path.join(scriptsOut, 'plugs', rel),
+        label: rel,
+      });
     }
   }
 
-  // Preserve top-level bootstrap scripts (main.js, game.js, ccRequire.js,
-  // adapter-min.js, physics-min.js, cocos2d-js-min.js) under _boot/. These
-  // aren't user code but make the recovered project runnable for inspection.
+  await forEachPool(copyJobs, concurrency, async ({ src, dest, label }) => {
+    await mkdir(path.dirname(dest), { recursive: true });
+    await copyFile(src, dest);
+    await writeScriptMeta(dest);
+    if (verbose) logger.debug(`Script: ${label}`);
+  });
+
+  // Preserve top-level bootstrap scripts under _boot/.
   const bootFiles = [
     'main.js', 'game.js', 'game.json', 'ccRequire.js',
     'adapter-min.js', 'physics-min.js',
@@ -778,12 +806,17 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
   if (fs.existsSync(cocosDir)) {
     const cocosOut = path.join(bootOut, 'cocos');
     await mkdir(cocosOut, { recursive: true });
-    for (const f of await readdir(cocosDir)) {
-      await copyFile(path.join(cocosDir, f), path.join(cocosOut, f));
-    }
+    const cocosEntries = await readdir(cocosDir, { withFileTypes: true });
+    await forEachPool(
+      cocosEntries.filter((e) => e.isFile()),
+      concurrency,
+      async (e) => {
+        await copyFile(path.join(cocosDir, e.name), path.join(cocosOut, e.name));
+      },
+    );
   }
 
-  return { total };
+  return { total: copyJobs.length };
 }
 
 async function* walkJsFiles(root) {

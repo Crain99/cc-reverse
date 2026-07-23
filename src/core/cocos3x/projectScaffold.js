@@ -7,12 +7,12 @@
  * seed the parts the editor *reads* up front: project.json + settings/.
  */
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
-const { promisify } = require('util');
 const { uuidUtils } = require('../../utils/uuidUtils');
 
-const mkdir = promisify(fs.mkdir);
-const writeFile = promisify(fs.writeFile);
+const mkdir = fsp.mkdir;
+const writeFile = fsp.writeFile;
 
 /**
  * Write a Cocos Creator 2.4.x project skeleton (the "bundle-style" variant —

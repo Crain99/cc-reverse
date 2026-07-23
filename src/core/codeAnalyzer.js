@@ -2,288 +2,252 @@
  * @Date: 2025-06-07 10:06:12
  * @Description: 代码分析和生成工具
  */
-const generator = require("@babel/generator");
-const parser = require("@babel/parser");
-const traverse = require("@babel/traverse");
-const types = require("@babel/types");
-const fs = require("fs");
-const path = require("path");
-const { promisify } = require('util');
+const generator = require('@babel/generator');
+const parser = require('@babel/parser');
+const traverse = require('@babel/traverse');
+const types = require('@babel/types');
+const fs = require('fs');
+const fsp = fs.promises;
+const path = require('path');
 const { uuidUtils } = require('../utils/uuidUtils');
 const { fileManager } = require('../utils/fileManager');
 const { logger } = require('../utils/logger');
-
-// 将 fs 的异步方法转换为 Promise
-const mkdir = promisify(fs.mkdir);
-const writeFile = promisify(fs.writeFile);
-const appendFile = promisify(fs.appendFile);
+const { forEachPool, getMaxParallel } = require('../utils/asyncPool');
 
 /**
  * 代码分析器模块
  */
 const codeAnalyzer = {
-    /**
-     * 分析编译源代码
-     * @param {string} code 要分析的源代码
-     * @returns {Promise<void>}
-     */
-    async analyze(code) {
-        try {
-            // 1. 解析代码为 AST
-            const ast = parser.parse(code);
-            const values = [];
-            
-            // 2. 定义访问者函数查找值
-            const findValue = {
-                ArrayExpression(path) {
-                    const { node } = path;
-                    if (node && node.elements) {
-                        for (let i of node.elements) {
-                            if (types.isStringLiteral(i)) {
-                                values.push(i.value);
-                            }
-                        }
-                    }
-                },
-            };
-            
-            // 辅助函数 - 处理模块参数
-            const processModuleParams = function(node) {
-                let _require = node.value.elements[0].params[0].name;
-                let _module = node.value.elements[0].params[1].name;
-                let _exports = node.value.elements[0].params[2].name;
-                
-                // 创建变量声明
-                let id1 = types.identifier(`${_require}`);
-                let id2 = types.identifier(`${_module}`);
-                let id3 = types.identifier(`${_exports}`);
-                let init1 = types.identifier("require");
-                let init2 = types.identifier("module");
-                let init3 = types.identifier("exports");
-                let variable1 = types.variableDeclarator(id1, init1);
-                let declaration1 = types.variableDeclaration("let", [variable1]);
-                let variable2 = types.variableDeclarator(id2, init2);
-                let declaration2 = types.variableDeclaration("let", [variable2]);
-                let variable3 = types.variableDeclarator(id3, init3);
-                let declaration3 = types.variableDeclaration("let", [variable3]);
-                
-                // 将声明添加到节点
-                node.value.elements[0].body.body.unshift(declaration1, declaration2, declaration3);
-                
-                return { _require, _module, _exports };
-            };
-            
-            // 辅助函数 - 生成元数据文件
-            const generateMetaFiles = function(node) {
-                if (node.type == 'ExpressionStatement') {
-                    // 处理表达式数组
-                    if (node.expression.expressions) {
-                        for (let a of node.expression.expressions) {
-                            if (a.arguments && a.arguments.length == 3) {
-                                if (a.arguments[1]) {
-                                    if (a.arguments[1].type && a.arguments[1].type == "StringLiteral" && a.arguments[1].value != "__esModule") {
-                                        let filename = a.arguments[2].value.split('.')[0] + ".ts";
-                                        
-                                        let fileMap = new Set();
-                                        fileMap[filename] = uuidUtils.decodeUuid(uuidUtils.original_uuid(a.arguments[1].value));
-                                        fileManager.createMetaFile(fileMap);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    // 处理单个表达式
-                    if (node.expression.arguments && node.expression.arguments.length == 3) {
-                        if (node.expression.arguments[1]) {                                        
-                            if (node.expression.arguments[1].type && node.expression.arguments[1].type == "StringLiteral" && node.expression.arguments[1].value != "__esModule") {
-                                let filename = node.expression.arguments[2].value.split('.')[0] + ".ts";
-                                let fileMap = new Set();
-                                fileMap[filename] = uuidUtils.decodeUuid(uuidUtils.original_uuid(node.expression.arguments[1].value));
-                                fileManager.createMetaFile(fileMap);
-                            }
-                        }
-                    }
-                }
-            };
-            
-            // 辅助函数 - 处理导入路径
-            const processImportPaths = function(node) {
-                // 处理变量声明中的导入路径
-                if (node.type == 'VariableDeclaration' && node.declarations) {
-                    for (let j of node.declarations) {
-                        if (j.init) {
-                            // 处理初始化表达式的参数
-                            if (j.type == "VariableDeclarator" && j.init.arguments) {
-                                if (j.init.arguments[0] && j.init.arguments[0].value) {
-                                    j.init.arguments[0].value = path.basename(j.init.arguments[0].value);
-                                }
-                            }
-                            
-                            // 处理初始化表达式序列
-                            if (j.type == "VariableDeclarator" && j.init.expressions) {
-                                for (let res of j.init.expressions) {
-                                    if (res.type == "CallExpression") {
-                                        if (res.arguments && res.arguments[0] && res.arguments[0].value) {
-                                            if (typeof res.arguments[0].value == "string") {
-                                                res.arguments[0].value = path.basename(res.arguments[0].value);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 处理表达式语句中的导入路径
-                if (node.type == 'ExpressionStatement' && node.expression) {
-                    if (node.expression.type == "CallExpression" && node.expression.arguments) {
-                        let res = node.expression.arguments;
-                        if (res[0] && typeof res[0].value == "string") {
-                            res[0].value = path.basename(res[0].value);
-                        }
-                    }
-                }
-            };
-            
-            // 辅助函数 - 保存 AST 到文件
-            const saveAstToFile = async function(node, value) {
-                try {
-                    const str = JSON.stringify(node.value.elements[0].body);
-                    const astPath = path.join(global.paths.ast, `${value}.json`);
-                    
-                    // 写入文件
-                    await writeFile(astPath, str, { flag: 'w+' });
-                    
-                    if (global.verbose) {
-                        logger.debug(`保存 AST 到文件: ${astPath}`);
-                    }
-                } catch (err) {
-                    logger.error(`保存 AST 到文件时出错:`, err);
-                }
-            };
-            
-            // 辅助函数 - 处理节点元素
-            const processNodeElements = async function(node, value) {
-                for (let i of node.value.elements[0].body.body) {
-                    // 生成元数据文件
-                    generateMetaFiles(i);
-                    
-                    // 处理导入路径
-                    processImportPaths(i);
-                }
-                
-                // 保存 AST 到文件
-                await saveAstToFile(node, value);
-            };
-            
-            // 3. 定义分割访问者 - 只包含合法的 Babel 访问器方法
-            const splitVisitor = {
-                Property(path) {
-                    const { node } = path;
-                    if (values.length > 0) {
-                        for (let value of values) {
-                            if (node && (node.key.name == value || node.key.value == value) && node.value.elements) {
-                                // 处理模块参数 - 这里直接调用辅助函数
-                                processModuleParams(node);
-                                
-                                // 处理节点元素 - 这里直接调用辅助函数
-                                processNodeElements(node, value);
-                            }
-                        }
-                    }
-                }
-            };
-            
-            // 遍历 AST
-            traverse.default(ast, findValue);
-            traverse.default(ast, splitVisitor);
-            
-            // 处理 AST 文件生成代码
-            await this.processAstFiles();
-            
-            logger.info('代码分析完成');
-        } catch (err) {
-            logger.error('分析编译代码时出错:', err);
-            throw err;
-        }
-    },
-    
-    /**
-     * 处理 AST 文件生成代码
-     */
-    async processAstFiles() {
-        try {
-            const astFiles = await fileManager.readDirectory(global.paths.ast);
-            
-            for (const file of astFiles) {
-                const fullPath = path.join(global.paths.ast, file);
-                const content = await fileManager.readFile(fullPath);
-                
-                try {
-                    const key = path.basename(file, '.json');
-                    await this.generateCode(JSON.parse(content), key);
-                } catch (err) {
-                    logger.error(`处理 AST 文件 ${file} 时出错:`, err);
-                }
+  _metaWrites: [],
+
+  /**
+   * 分析编译源代码
+   * @param {string} code 要分析的源代码
+   * @returns {Promise<void>}
+   */
+  async analyze(code) {
+    try {
+      this._metaWrites = [];
+      // 1. 解析代码为 AST
+      const ast = parser.parse(code);
+      const values = [];
+      // 内存中保存模块 body，避免 AST 落盘再读
+      const modules = new Map(); // moduleName -> body AST node
+
+      // 2. 收集模块名（字符串数组）
+      const findValue = {
+        ArrayExpression(path) {
+          const { node } = path;
+          if (node && node.elements) {
+            for (const el of node.elements) {
+              if (types.isStringLiteral(el)) {
+                values.push(el.value);
+              }
             }
-        } catch (err) {
-            logger.error('处理 AST 文件时出错:', err);
-            throw err;
-        }
-    },
-    
-    /**
-     * 从 AST 生成代码
-     * @param {Object} ast AST 对象
-     * @param {string} filename 文件名
-     */
-    async generateCode(ast, filename) {
-        try {
-            // 生成代码
-            let res = generator.default(ast, {})["code"];
-            const scriptsDir = path.join(global.paths.output, 'assets/Scripts');
-            const outputPath = path.join(scriptsDir, `${filename}.ts`);
-            
-            // 确保输出目录存在
-            await mkdir(path.dirname(outputPath), { recursive: true });
-            
-            // 写入生成的代码
-            await appendFile(
-                outputPath, 
-                JSON.parse(JSON.stringify(res.slice(1, res.length - 1))), 
-                { encoding: "utf-8", flag: 'w+' }
-            );
-            
-            // 生成元数据文件
-            this.generateMetaFile(filename);
-            
-            if (global.verbose) {
-                logger.debug(`生成代码文件: ${filename}.ts`);
-            }
-        } catch (err) {
-            logger.error(`生成代码 ${filename} 时出错:`, err);
-        }
-    },
-    
-    /**
-     * 生成元数据文件
-     * @param {string} filename 文件名
-     */
-    generateMetaFile(filename) {
-        const meta = {
-            "ver": "1.0.8",
-            "uuid": uuidUtils.decodeUuid(uuidUtils.original_uuid(filename)),
-            "isPlugin": false,
-            "loadPluginInWeb": true,
-            "loadPluginInNative": true,
-            "loadPluginInEditor": false,
-            "subMetas": {}
+          }
+        },
+      };
+
+      // 辅助 — 处理模块参数，把 require/module/exports 注入函数体
+      const processModuleParams = function (node) {
+        const params = node.value.elements[0].params;
+        const _require = params[0].name;
+        const _module = params[1].name;
+        const _exports = params[2].name;
+
+        const declaration1 = types.variableDeclaration('let', [
+          types.variableDeclarator(types.identifier(_require), types.identifier('require')),
+        ]);
+        const declaration2 = types.variableDeclaration('let', [
+          types.variableDeclarator(types.identifier(_module), types.identifier('module')),
+        ]);
+        const declaration3 = types.variableDeclaration('let', [
+          types.variableDeclarator(types.identifier(_exports), types.identifier('exports')),
+        ]);
+
+        node.value.elements[0].body.body.unshift(declaration1, declaration2, declaration3);
+        return { _require, _module, _exports };
+      };
+
+      // 辅助 — 生成脚本 meta（同步登记，异步写文件由 createMetaFile 完成）
+      const metaEntries = {};
+      const generateMetaFiles = function (node) {
+        if (node.type !== 'ExpressionStatement') return;
+
+        const record = (args) => {
+          if (!args || args.length !== 3) return;
+          if (!args[1] || args[1].type !== 'StringLiteral') return;
+          if (args[1].value === '__esModule') return;
+          if (!args[2] || typeof args[2].value !== 'string') return;
+
+          const filename = args[2].value.split('.')[0] + '.ts';
+          metaEntries[filename] = uuidUtils.decodeUuid(uuidUtils.original_uuid(args[1].value));
         };
-        
-        fileManager.writeFile("Scripts", filename + ".ts.meta", meta);
+
+        if (node.expression.expressions) {
+          for (const a of node.expression.expressions) {
+            if (a.arguments) record(a.arguments);
+          }
+        }
+        if (node.expression.arguments) {
+          record(node.expression.arguments);
+        }
+      };
+
+      // 辅助 — 处理导入路径（仅保留 basename）
+      const processImportPaths = function (node) {
+        if (node.type === 'VariableDeclaration' && node.declarations) {
+          for (const j of node.declarations) {
+            if (!j.init) continue;
+
+            if (j.type === 'VariableDeclarator' && j.init.arguments) {
+              if (j.init.arguments[0] && j.init.arguments[0].value) {
+                j.init.arguments[0].value = path.basename(j.init.arguments[0].value);
+              }
+            }
+
+            if (j.type === 'VariableDeclarator' && j.init.expressions) {
+              for (const res of j.init.expressions) {
+                if (res.type === 'CallExpression'
+                    && res.arguments
+                    && res.arguments[0]
+                    && typeof res.arguments[0].value === 'string') {
+                  res.arguments[0].value = path.basename(res.arguments[0].value);
+                }
+              }
+            }
+          }
+        }
+
+        if (node.type === 'ExpressionStatement' && node.expression) {
+          if (node.expression.type === 'CallExpression' && node.expression.arguments) {
+            const res = node.expression.arguments;
+            if (res[0] && typeof res[0].value === 'string') {
+              res[0].value = path.basename(res[0].value);
+            }
+          }
+        }
+      };
+
+      // 3. 分割访问者：按模块名切开 project.js
+      const splitVisitor = {
+        Property(path) {
+          const { node } = path;
+          if (values.length === 0 || !node || !node.value || !node.value.elements) return;
+
+          for (const value of values) {
+            if (node.key.name === value || node.key.value === value) {
+              processModuleParams(node);
+
+              for (const stmt of node.value.elements[0].body.body) {
+                generateMetaFiles(stmt);
+                processImportPaths(stmt);
+              }
+
+              // 内存保存，不落盘
+              modules.set(value, node.value.elements[0].body);
+            }
+          }
+        },
+      };
+
+      traverse.default(ast, findValue);
+      traverse.default(ast, splitVisitor);
+
+      // 批量写 meta
+      if (Object.keys(metaEntries).length > 0) {
+        await fileManager.createMetaFile(metaEntries);
+      }
+
+      // 从内存直接生成代码
+      await this.generateModules(modules);
+
+      // 等待脚本 meta 写完
+      if (this._metaWrites.length > 0) {
+        await Promise.all(this._metaWrites);
+        this._metaWrites = [];
+      }
+
+      // verbose 时可选落盘 AST 便于调试
+      if (global.verbose && global.paths?.ast) {
+        await fsp.mkdir(global.paths.ast, { recursive: true });
+        for (const [name, body] of modules) {
+          const astPath = path.join(global.paths.ast, `${name}.json`);
+          await fsp.writeFile(astPath, JSON.stringify(body));
+        }
+      }
+
+      logger.info(`代码分析完成，共 ${modules.size} 个模块`);
+    } catch (err) {
+      logger.error('分析编译代码时出错:', err);
+      throw err;
     }
+  },
+
+  /**
+   * 从内存中的模块 AST 并发生成代码
+   * @param {Map<string, object>} modules
+   */
+  async generateModules(modules) {
+    const entries = [...modules.entries()];
+    const concurrency = getMaxParallel();
+
+    await forEachPool(entries, concurrency, async ([filename, bodyAst]) => {
+      await this.generateCode(bodyAst, filename);
+    });
+  },
+
+  /**
+   * 从 AST 生成代码
+   * @param {Object} ast AST 对象（模块 body）
+   * @param {string} filename 文件名
+   */
+  async generateCode(ast, filename) {
+    try {
+      const res = generator.default(ast, {}).code;
+      // Babel 对 BlockStatement 会包一层 `{}`，去掉首尾花括号
+      let code = res;
+      if (code.startsWith('{') && code.endsWith('}')) {
+        code = code.slice(1, -1);
+      }
+
+      const scriptsDir = path.join(global.paths.output, 'assets/Scripts');
+      const outputPath = path.join(scriptsDir, `${filename}.ts`);
+
+      await fsp.mkdir(path.dirname(outputPath), { recursive: true });
+      await fsp.writeFile(outputPath, code, 'utf-8');
+
+      this.generateMetaFile(filename);
+
+      if (global.verbose) {
+        logger.debug(`生成代码文件: ${filename}.ts`);
+      }
+    } catch (err) {
+      logger.error(`生成代码 ${filename} 时出错:`, err);
+    }
+  },
+
+  /**
+   * 生成元数据文件（登记到 _metaWrites，analyze 末尾统一 await）
+   * @param {string} filename 文件名
+   */
+  generateMetaFile(filename) {
+    const meta = {
+      ver: '1.0.8',
+      uuid: uuidUtils.decodeUuid(uuidUtils.original_uuid(filename)),
+      isPlugin: false,
+      loadPluginInWeb: true,
+      loadPluginInNative: true,
+      loadPluginInEditor: false,
+      subMetas: {},
+    };
+
+    this._metaWrites.push(
+      fileManager.writeFile('Scripts', `${filename}.ts.meta`, meta).catch((err) => {
+        logger.error(`写入脚本 meta ${filename}.ts.meta 失败:`, err);
+      }),
+    );
+  },
 };
 
-module.exports = { codeAnalyzer }; 
+module.exports = { codeAnalyzer };

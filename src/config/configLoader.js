@@ -45,7 +45,7 @@ const defaultConfig = {
         verbose: false,
         cacheEnabled: true,
         tempDir: "temp",
-        maxParallel: 4
+        maxParallel: 8
     }
 };
 
