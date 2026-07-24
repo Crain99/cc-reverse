@@ -13,7 +13,7 @@ Cocos Creator 逆向工程工具，用于从编译后的 Cocos Creator 游戏中
 
 如果您觉得这个项目对您有帮助，请给我们一个 Star ⭐️，这是对我们最大的鼓励！
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Crain99/cc-reverse&type=Date)](https://star-history.com/#Crain99/cc-reverse&Date)
+[![GitHub Stars](https://img.shields.io/github/stars/Crain99/cc-reverse?style=for-the-badge&logo=github&label=Stars)](https://github.com/Crain99/cc-reverse/stargazers)
 
 ## 功能特性
 
