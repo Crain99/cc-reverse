@@ -647,6 +647,23 @@ describe('sanitizeScriptFileName / splitSystemRegisterSource', () => {
     expect(parts[1].id).toBe('chunks:///_virtual/B.ts');
     expect(parts[0].code.startsWith('System.register')).toBe(true);
   });
+
+  it('skips anonymous wrappers and variable-id reexports (no module_N.js)', () => {
+    const code = (
+      'System.register([], function(_export, _context) { return { execute: function () {'
+      + 'System.register("chunks:///_virtual/rollupPluginModLoBabelHelpers.js",[],(function(e){return{execute:function(){e("x",1)}}));'
+      + '}});'
+      + 'System.register("chunks:///_virtual/Foo.ts",["cc"],(function(t){return{setters:[function(){}],execute:function(){t("Foo",1)}}));'
+      + 'System.register(mid, [cid], function (_export, _context) {'
+      + 'return { setters: [function(_m) { _export(_m); }], execute: function () { } }; });'
+    );
+    const parts = splitSystemRegisterSource(code);
+    expect(parts.map((p) => p.id)).toEqual([
+      'chunks:///_virtual/rollupPluginModLoBabelHelpers.js',
+      'chunks:///_virtual/Foo.ts',
+    ]);
+    expect(parts.every((p) => p.id)).toBe(true);
+  });
 });
 
 describe('image subAsset path helpers', () => {

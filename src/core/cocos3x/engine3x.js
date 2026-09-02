@@ -1121,7 +1121,8 @@ function countSystemRegisters(code) {
 
 /**
  * Split a multi-register SystemJS chunk into per-module files under scriptsOut.
- * Names come from System.register("id", ...) when present; otherwise module_N.js.
+ * Only string-literal register ids are emitted (chunks:///_virtual/Foo.ts → Foo.ts);
+ * anonymous / variable-id rollup wrappers are skipped.
  */
 async function splitAndEmitSystemRegisters(code, scriptsOut, verbose) {
   const parts = splitSystemRegisterSource(code);
@@ -1155,27 +1156,30 @@ function splitSystemRegisterSource(code) {
   }
   if (starts.length === 0) return [];
 
+  // Only emit registers with a string literal id (chunks:///_virtual/Foo.ts).
+  // Skip anonymous / variable-id registers (rollup wrappers like
+  // System.register([], ...) and System.register(mid, [cid], ...)) — those
+  // previously became bogus module_N.js stubs, and nested wrappers truncated
+  // the outer shell at the inner register start.
   const parts = [];
   for (let i = 0; i < starts.length; i += 1) {
     const from = starts[i];
-    const to = i + 1 < starts.length ? starts[i + 1] : code.length;
-    let chunk = code.slice(from, to).trim();
-    // Drop trailing junk after the register's closing ');'
-    const endStmt = findRegisterStatementEnd(chunk);
-    if (endStmt > 0) chunk = chunk.slice(0, endStmt).trim();
+    const endStmt = findRegisterStatementEnd(code.slice(from));
+    if (endStmt <= 0) continue; // incomplete / unclosed
+    const chunk = code.slice(from, from + endStmt).trim();
     const idMatch = chunk.match(
       /^System\s*\.\s*register\s*\(\s*['"]([^'"]+)['"]\s*,/,
     );
+    if (!idMatch) continue;
     const uuid = extractRfUuid(chunk);
     parts.push({
-      id: idMatch ? idMatch[1] : null,
+      id: idMatch[1],
       uuid,
       code: chunk.endsWith('\n') ? chunk : `${chunk}\n`,
     });
   }
   return parts;
 }
-
 function findRegisterStatementEnd(chunk) {
   // Find matching paren for System.register( ... ) then optional ';'
   const open = chunk.indexOf('(');
