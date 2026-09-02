@@ -16,14 +16,21 @@ const { uuidUtils } = require('../../utils/uuidUtils');
  * output paths stay project-relative (never a literal `db:` directory).
  * Real 3.8 web-mobile builds often use ONE slash: `db:/assets/scene/scene`.
  *
+ * Also drops a leading `assets/` segment: bundle recovery writes under
+ * `assets/<bundleName>/`, so keeping `assets/` would produce the double
+ * prefix `assets/main/assets/scenes/...`. Paths that are already bundle-
+ * relative (`UI_res/...`, `textures/...`) and `internal/...` are unchanged.
+ *
  * @param {string|null|undefined} relPath
  * @returns {string|null|undefined}
  */
 function normalizeDbAssetPath(relPath) {
   if (relPath == null || typeof relPath !== 'string') return relPath;
   let s = relPath.replace(/^db:\/+/i, '');
-  // Drop leading ./ noise only — keep a leading `assets/` segment when present.
+  // Drop leading ./ noise.
   s = s.replace(/^(?:\.\/)+/, '');
+  // Avoid assets/<bundle>/assets/... when db path was db://assets/...
+  s = s.replace(/^assets\//i, '');
   return s;
 }
 

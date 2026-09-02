@@ -11,6 +11,7 @@
 - Strip `/texture` / `/spriteFrame` / `@6c48a|@f9941` from output file paths; fold uuid-only `@` siblings onto parent ImageAsset (named path or `_packed/<2>/<base>`)
 - Sweep leftover `native/` files and report per-bundle native image counts (explicit “import descriptors only” note for web-mobile builds with zero image bytes)
 - Normalize `config.paths` `db://` **and** `db:/` (single-slash) prefixes so recovered assets are not written under a literal `db:` directory (real Creator 3.8 web-mobile)
+- Strip leading `assets/` after `db://`/`db:/` normalize so bundle output is `assets/<bundle>/scenes/...` not `assets/<bundle>/assets/scenes/...` (keeps `internal/...` and plain `UI_res/...` paths)
 - Treat Creator 3.x rollup `System.register("chunks:///_virtual/...")` packs as SystemJS (not browserify); demux one file per register id (`Foo.ts`) with aliased `._RF.push` UUID metas — no more bogus `setters.ts`
 - Skip anonymous / variable-id `System.register` wrappers (nested rollup shell + `mid`/`cid` reexports) so recovery no longer emits empty `module_N.js` stubs
 - **Issue #33**: Write meta as `basename+ext+.meta` (e.g. `logo.png.meta`); do not emit orphan `.png.meta` when native PNG was not recovered (2.x SpriteFrame + 3.x pure-native)

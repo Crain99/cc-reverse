@@ -160,17 +160,24 @@ describe('findBundleConfigPath / hasBundleConfig (MD5 Cache)', () => {
 });
 
 describe('normalizeDbAssetPath', () => {
-  it('strips db:// and db:/ (single-slash) prefixes', () => {
-    expect(normalizeDbAssetPath('db://assets/scene/scene')).toBe('assets/scene/scene');
-    expect(normalizeDbAssetPath('db:/assets/scene/scene')).toBe('assets/scene/scene');
+  it('strips db:// / db:/ and leading assets/ (no double assets under bundle)', () => {
+    expect(normalizeDbAssetPath('db://assets/scenes/foo')).toBe('scenes/foo');
+    expect(normalizeDbAssetPath('db:/assets/scenes/foo')).toBe('scenes/foo');
+    expect(normalizeDbAssetPath('db://assets/scene/scene')).toBe('scene/scene');
+    expect(normalizeDbAssetPath('db:/assets/scene/scene')).toBe('scene/scene');
     expect(normalizeDbAssetPath('db:/internal/physics/default-physics-material')).toBe(
       'internal/physics/default-physics-material',
     );
   });
 
-  it('leaves plain relative paths alone', () => {
+  it('leaves plain relative paths alone (no assets/ prefix)', () => {
     expect(normalizeDbAssetPath('scenes/Main')).toBe('scenes/Main');
     expect(normalizeDbAssetPath('textures/logo')).toBe('textures/logo');
+    expect(normalizeDbAssetPath('UI_res/headimage/texture')).toBe('UI_res/headimage/texture');
+  });
+
+  it('strips bare leading assets/ even without db: prefix', () => {
+    expect(normalizeDbAssetPath('assets/textures/logo')).toBe('textures/logo');
   });
 
   it('passes through nullish', () => {
@@ -180,22 +187,25 @@ describe('normalizeDbAssetPath', () => {
 });
 
 describe('parseBundleConfig — real 3.8 db:/ paths', () => {
-  it('normalizes db:/assets/... path entries (no literal db: segment)', () => {
+  it('normalizes db:/assets/... without double assets or literal db: segment', () => {
     const raw = {
       name: 'main',
       debug: true,
-      uuids: ['u-scene', 'u-mat'],
+      uuids: ['u-scene', 'u-mat', 'u-tex'],
       paths: {
         0: ['db:/assets/scene/scene', 0],
         1: ['db:/internal/physics/default-physics-material', 1],
+        2: ['UI_res/headimage/texture', 2],
       },
-      types: ['cc.SceneAsset', 'cc.PhysicsMaterial'],
+      types: ['cc.SceneAsset', 'cc.PhysicsMaterial', 'cc.Texture2D'],
       scenes: { 'db://assets/scene/scene.scene': '0' },
     };
     const cfg = parseBundleConfig(raw, '/fake/main');
-    expect(cfg.paths['u-scene'].path).toBe('assets/scene/scene');
+    expect(cfg.paths['u-scene'].path).toBe('scene/scene');
     expect(cfg.paths['u-mat'].path).toBe('internal/physics/default-physics-material');
+    expect(cfg.paths['u-tex'].path).toBe('UI_res/headimage/texture');
     expect(cfg.paths['u-scene'].path.includes('db:')).toBe(false);
+    expect(cfg.paths['u-scene'].path.startsWith('assets/')).toBe(false);
   });
 });
 
