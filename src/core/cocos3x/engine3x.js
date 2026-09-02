@@ -322,6 +322,8 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
     pathCount: Object.keys(cfg.paths).length,
     sceneCount: Object.keys(cfg.scenes).length,
     recovered: 0,
+    namedRecovered: 0,
+    packedRecovered: 0,
     missing: 0,
     redirected: 0,
     nativeFiles: 0,
@@ -364,8 +366,10 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
         cfg, uuid, info, bundleOut, verbose, flavor,
       });
       handled.add(uuid);
-      if (ok) result.recovered += 1;
-      else result.missing += 1;
+      if (ok) {
+        result.recovered += 1;
+        result.namedRecovered += 1;
+      } else result.missing += 1;
     } catch (err) {
       result.warnings.push(`${info.path}: ${err.message}`);
       logger.debug(`Asset ${uuid} (${info.path}) failed: ${err.message}`);
@@ -392,8 +396,10 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
     try {
       const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose, flavor });
       handled.add(uuid);
-      if (ok) result.recovered += 1;
-      else result.missing += 1;
+      if (ok) {
+        result.recovered += 1;
+        result.namedRecovered += 1;
+      } else result.missing += 1;
     } catch (err) {
       result.warnings.push(`scene ${sceneName}: ${err.message}`);
     }
@@ -417,7 +423,10 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
     try {
       const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose, flavor });
       handled.add(uuid);
-      if (ok) result.recovered += 1;
+      if (ok) {
+        result.recovered += 1;
+        result.packedRecovered += 1;
+      }
     } catch (err) {
       // These are often internal/packed — don't count as warnings.
       logger.debug(`Packed uuid ${uuid} skipped: ${err.message}`);
@@ -1088,6 +1097,10 @@ function classToImporter(className) {
 /**
  * Recover user scripts from src/chunks (SystemJS) into assets/Scripts.
  *
+ * Engine/vendor noise (cocos-js wasm wrappers, builtin-pipeline, rollup helpers,
+ * bundle entry stubs) lands under assets/Scripts/_vendor/ so game scripts stay
+ * easy to browse.
+ *
  * 3.x ships TypeScript compiled to ES5. We preserve filenames where possible.
  */
 async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
@@ -1095,17 +1108,26 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
   const scriptsOut = path.join(outputPath, 'assets', 'Scripts');
   const concurrency = getMaxParallel();
   let total = 0;
+  let game = 0;
+  let vendor = 0;
+
+  const tallyEmit = (rel) => {
+    total += 1;
+    if (isUnderVendor(rel)) vendor += 1;
+    else game += 1;
+  };
 
   // 1) src/chunks (+ other dirs): copy single SystemJS modules; split when a
   //    file contains multiple System.register calls (#23 / multi-chunk packs).
+  //    Entire cocos-js/ tree is treated as vendor (spine/bullet/_virtual_cc).
   const candidates = [
-    path.join(sourcePath, 'src', 'chunks'),
-    path.join(sourcePath, 'src'),
-    path.join(sourcePath, 'cocos-js'),
+    { dir: path.join(sourcePath, 'src', 'chunks'), forceVendor: false },
+    { dir: path.join(sourcePath, 'src'), forceVendor: false },
+    { dir: path.join(sourcePath, 'cocos-js'), forceVendor: true },
   ];
   const copyJobs = [];
 
-  for (const dir of candidates) {
+  for (const { dir, forceVendor } of candidates) {
     if (!fs.existsSync(dir)) continue;
     let entries;
     try {
@@ -1118,10 +1140,13 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
       if (entry.name.startsWith('system.') || entry.name.startsWith('polyfills.')) continue;
       if (entry.name === 'cc.js') continue;
       if (entry.name === 'settings.js') continue;
+      const rel = scriptOutRel(entry.name, { forceVendor });
       copyJobs.push({
         src: path.join(dir, entry.name),
-        dest: path.join(scriptsOut, entry.name),
+        dest: path.join(scriptsOut, rel),
+        rel,
         label: entry.name,
+        forceVendor,
       });
     }
   }
@@ -1130,16 +1155,18 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
   const srcAssets = path.join(sourcePath, 'src', 'assets');
   if (fs.existsSync(srcAssets)) {
     for await (const file of walkJsFiles(srcAssets)) {
-      const rel = path.relative(srcAssets, file);
+      const rel = path.posix.join('plugs', path.relative(srcAssets, file).split(path.sep).join('/'));
       copyJobs.push({
         src: file,
-        dest: path.join(scriptsOut, 'plugs', rel),
+        dest: path.join(scriptsOut, rel),
+        rel,
         label: rel,
+        forceVendor: false,
       });
     }
   }
 
-  await forEachPool(copyJobs, concurrency, async ({ src, dest, label }) => {
+  await forEachPool(copyJobs, concurrency, async ({ src, dest, rel, label }) => {
     let code;
     try {
       code = await readFile(src, 'utf-8');
@@ -1149,15 +1176,17 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
     const registers = countSystemRegisters(code);
     if (registers > 1) {
       const split = await splitAndEmitSystemRegisters(code, scriptsOut, verbose);
-      total += split;
-      if (verbose) logger.debug(`Script chunk demux: ${label} → ${split} modules`);
+      total += split.total;
+      game += split.game;
+      vendor += split.vendor;
+      if (verbose) logger.debug(`Script chunk demux: ${label} → ${split.total} modules`);
       return;
     }
     await mkdir(path.dirname(dest), { recursive: true });
     await writeFile(dest, code);
     await writeScriptMeta(dest, extractRfUuid(code));
-    total += 1;
-    if (verbose) logger.debug(`Script: ${label}`);
+    tallyEmit(rel);
+    if (verbose) logger.debug(`Script: ${rel}`);
   });
 
   // 2) Demux packed bundle index.js / game.js into assets/Scripts (#23).
@@ -1195,10 +1224,13 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
           const registers = countSystemRegisters(code);
           if (registers > 0) {
             const written = await splitAndEmitSystemRegisters(code, scriptsOut, verbose);
-            total += written;
-            if (verbose || written > 0) {
+            total += written.total;
+            game += written.game;
+            vendor += written.vendor;
+            if (verbose || written.total > 0) {
               logger.info(
-                `Demux ${entry.name}/${scriptName}: ${written} System.register modules`,
+                `Demux ${entry.name}/${scriptName}: ${written.total} System.register modules `
+                + `(game=${written.game}, vendor=${written.vendor})`,
               );
             }
             continue;
@@ -1210,6 +1242,7 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
           });
           const written = (result && result.written) || 0;
           total += written;
+          game += written;
           if (verbose || written > 0) {
             logger.info(
               `Demux ${entry.name}/${scriptName}: ${written} modules `
@@ -1252,7 +1285,11 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
     );
   }
 
-  return { total };
+  if (verbose || vendor > 0) {
+    logger.info(`Scripts: ${game} game, ${vendor} vendor → assets/Scripts/_vendor/`);
+  }
+
+  return { total, game, vendor };
 }
 
 /**
@@ -1300,28 +1337,38 @@ function countSystemRegisters(code) {
  * Split a multi-register SystemJS chunk into per-module files under scriptsOut.
  * Only string-literal register ids are emitted (chunks:///_virtual/Foo.ts → Foo.ts);
  * anonymous / variable-id rollup wrappers are skipped.
+ * Engine/vendor modules go under scriptsOut/_vendor/.
+ *
+ * @returns {{ total: number, game: number, vendor: number }}
  */
 async function splitAndEmitSystemRegisters(code, scriptsOut, verbose) {
   const parts = splitSystemRegisterSource(code);
-  let written = 0;
+  let total = 0;
+  let game = 0;
+  let vendor = 0;
   for (let i = 0; i < parts.length; i += 1) {
     const part = parts[i];
     const safe = sanitizeScriptFileName(part.id || `module_${i}`);
-    const dest = path.join(scriptsOut, safe);
+    const rel = scriptOutRel(safe);
+    const dest = path.join(scriptsOut, rel);
     await mkdir(path.dirname(dest), { recursive: true });
     // Avoid clobbering an already-emitted module with the same id.
     let finalDest = dest;
+    let finalRel = rel;
     if (fs.existsSync(finalDest)) {
       const ext = path.extname(safe) || '.js';
-      const stem = safe.slice(0, safe.length - ext.length);
-      finalDest = path.join(scriptsOut, `${stem}_${i}${ext}`);
+      const stem = rel.slice(0, rel.length - ext.length);
+      finalRel = `${stem}_${i}${ext}`;
+      finalDest = path.join(scriptsOut, finalRel);
     }
     await writeFile(finalDest, part.code);
     await writeScriptMeta(finalDest, part.uuid);
-    written += 1;
-    if (verbose) logger.debug(`SystemJS split: ${path.relative(scriptsOut, finalDest)}`);
+    total += 1;
+    if (isUnderVendor(finalRel)) vendor += 1;
+    else game += 1;
+    if (verbose) logger.debug(`SystemJS split: ${finalRel}`);
   }
-  return written;
+  return { total, game, vendor };
 }
 
 function splitSystemRegisterSource(code) {
@@ -1405,11 +1452,66 @@ function extractRfUuid(code) {
 }
 
 /**
+ * Basename patterns for engine/vendor noise that should not clutter Scripts/.
+ * Matched after sanitizeScriptFileName (extension stripped for comparison).
+ */
+const VENDOR_SCRIPT_BASENAMES = new Set([
+  'main', 'internal', 'resources', 'env', 'import-map',
+  'rollupPluginModLoBabelHelpers',
+  'debug-view-runtime-control',
+]);
+
+/**
+ * @param {string} relPathOrId  sanitized relative path or register id
+ * @returns {boolean}
+ */
+function isEngineVendorScript(relPathOrId) {
+  const raw = String(relPathOrId || '');
+  // Strip known virtual prefixes when callers pass a raw register id.
+  let p = raw
+    .replace(/^chunks:\/\/\/_virtual\//i, '')
+    .replace(/^chunks:\/\//i, '');
+  const base = path.basename(p).replace(/\.(tsx?|jsx?)$/i, '');
+  if (!base) return false;
+  if (VENDOR_SCRIPT_BASENAMES.has(base)) return true;
+  if (/^_virtual_cc/i.test(base)) return true;
+  if (/^spine([.\-_]|$)/i.test(base)) return true;
+  if (/^bullet([.\-_]|$)/i.test(base)) return true;
+  if (/^rollupPluginModLoBabelHelpers/i.test(base)) return true;
+  if (/^builtin-pipeline/i.test(base)) return true;
+  return false;
+}
+
+function isUnderVendor(rel) {
+  const n = String(rel || '').replace(/\\/g, '/');
+  return n === '_vendor' || n.startsWith('_vendor/');
+}
+
+/**
+ * Place engine/vendor scripts under `_vendor/` (posix-style relative path).
+ * @param {string} sanitizedRel
+ * @param {{ forceVendor?: boolean }} [opts]
+ * @returns {string}
+ */
+function scriptOutRel(sanitizedRel, opts = {}) {
+  const forceVendor = !!(opts && opts.forceVendor);
+  let rel = String(sanitizedRel || 'module.js').replace(/^[/\\]+/, '');
+  rel = rel.split(/[/\\]+/).filter(Boolean).join('/');
+  if (!rel) rel = 'module.js';
+  if (isUnderVendor(rel)) return rel;
+  if (forceVendor || isEngineVendorScript(rel)) {
+    return `_vendor/${rel}`;
+  }
+  return rel;
+}
+
+/**
  * Derive a filesystem path under assets/Scripts from a System.register id.
  * `chunks:///_virtual/Foo.ts` → `Foo.ts`
  * `chunks:///_virtual/game/Bar.ts` → `game/Bar.ts`
  */
 function sanitizeScriptFileName(id) {
+
   let p = String(id || 'module');
   p = p
     .replace(/^chunks:\/\/\/_virtual\//i, '')
@@ -1493,6 +1595,8 @@ module.exports = {
   splitAndEmitSystemRegisters,
   countSystemRegisters,
   sanitizeScriptFileName,
+  isEngineVendorScript,
+  scriptOutRel,
   indexImageSubAssets,
   parentPathOfSubAsset,
   normalizeAssetFilePath,

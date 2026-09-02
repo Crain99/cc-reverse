@@ -10,6 +10,8 @@ const {
   extractRfUuid,
   splitSystemRegisterSource,
   sanitizeScriptFileName,
+  isEngineVendorScript,
+  scriptOutRel,
 } = require('../../src/core/cocos3x/engine3x');
 const { uuidUtils } = require('../../src/utils/uuidUtils');
 const { DataTypeID } = require('../../src/core/cocos3x/rehydrate');
@@ -613,20 +615,53 @@ System.register("chunks:///_virtual/Enemy.ts", ["cc"], function (e) {
     const summary = await reverseProject3x({ sourcePath: src, outputPath: out });
 
     expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'setters.ts'))).toBe(false);
-    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'debug-view-runtime-control.ts'))).toBe(true);
+    // Engine/vendor noise under _vendor/; game scripts stay at Scripts root
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', '_vendor', 'debug-view-runtime-control.ts'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'debug-view-runtime-control.ts'))).toBe(false);
     expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'scene.ts'))).toBe(true);
-    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'main.js'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', '_vendor', 'main.js'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'main.js'))).toBe(false);
     expect(summary.scripts.total).toBeGreaterThanOrEqual(3);
+    expect(summary.scripts.game).toBeGreaterThanOrEqual(1);
+    expect(summary.scripts.vendor).toBeGreaterThanOrEqual(2);
 
     const meta = JSON.parse(
       fs.readFileSync(
-        path.join(out, 'assets', 'Scripts', 'debug-view-runtime-control.ts.meta'),
+        path.join(out, 'assets', 'Scripts', '_vendor', 'debug-view-runtime-control.ts.meta'),
         'utf8',
       ),
     );
     expect(meta.uuid).toBe(uuidUtils.decodeUuid('b2bd1+njXxJxaFY3ymm06WU'));
   });
 
+});
+
+describe('isEngineVendorScript / scriptOutRel', () => {
+  it('classifies engine noise and bundle stubs as vendor', () => {
+    expect(isEngineVendorScript('chunks:///_virtual/rollupPluginModLoBabelHelpers.js')).toBe(true);
+    expect(isEngineVendorScript('builtin-pipeline.ts')).toBe(true);
+    expect(isEngineVendorScript('builtin-pipeline-settings.ts')).toBe(true);
+    expect(isEngineVendorScript('debug-view-runtime-control.ts')).toBe(true);
+    expect(isEngineVendorScript('_virtual_cc-2a93dcea.js')).toBe(true);
+    expect(isEngineVendorScript('spine-3e0daee9.js')).toBe(true);
+    expect(isEngineVendorScript('spine.wasm-53ff874d.js')).toBe(true);
+    expect(isEngineVendorScript('bullet.release.wasm-CA_q66kW.js')).toBe(true);
+    expect(isEngineVendorScript('main')).toBe(true);
+    expect(isEngineVendorScript('internal.js')).toBe(true);
+    expect(isEngineVendorScript('BirdControl.ts')).toBe(false);
+    expect(isEngineVendorScript('chunks:///_virtual/GameLogic.ts')).toBe(false);
+  });
+
+  it('routes vendor under _vendor/ and leaves game scripts at root', () => {
+    expect(scriptOutRel('BirdControl.ts')).toBe('BirdControl.ts');
+    expect(scriptOutRel('rollupPluginModLoBabelHelpers.js')).toBe(
+      '_vendor/rollupPluginModLoBabelHelpers.js',
+    );
+    expect(scriptOutRel('spine-3e0daee9.js', { forceVendor: true })).toBe(
+      '_vendor/spine-3e0daee9.js',
+    );
+    expect(scriptOutRel('_vendor/already.js')).toBe('_vendor/already.js');
+  });
 });
 
 describe('sanitizeScriptFileName / splitSystemRegisterSource', () => {
