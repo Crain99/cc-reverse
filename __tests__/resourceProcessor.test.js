@@ -266,6 +266,63 @@ describe('resourceProcessor issue regressions', () => {
     );
   });
 
+  test('processSpriteFrame does not write orphan png.meta without native', () => {
+    resourceProcessor.resetState();
+    global.paths = { res: '/tmp/assets', output: '/tmp/output' };
+    global.config = { assets: { spriteOutputMode: 'single' } };
+
+    const spriteData = {
+      __type__: 'cc.SpriteFrame',
+      _name: 'missing_tex',
+      _rect: { x: 0, y: 0, width: 10, height: 10 },
+      _offset: { x: 0, y: 0 },
+      _originalSize: { width: 10, height: 10 },
+      _rotated: false,
+      _texture: { __uuid__: 'no-such-tex' }
+    };
+
+    const writeFileSpy = jest.spyOn(
+      require('../src/utils/fileManager').fileManager, 'writeFile'
+    ).mockResolvedValue();
+
+    resourceProcessor.processSpriteFrame({ '0': spriteData }, '0', 'frame-orphan');
+
+    expect(resourceProcessor.cacheReadList).toHaveLength(0);
+    expect(writeFileSpy).not.toHaveBeenCalled();
+  });
+
+  test('processSpriteFrame colocates meta with rawAssets path when present', () => {
+    resourceProcessor.resetState();
+    global.paths = { res: '/tmp/assets', output: '/tmp/output' };
+    global.config = { assets: { spriteOutputMode: 'single' } };
+
+    resourceProcessor.fileMap.set('tex-raw', '/tmp/res/raw-assets/tex-raw.png');
+    resourceProcessor._rawAssetMap.set('tex-raw', { path: 'ui/icons/star.png', type: 0 });
+
+    const spriteData = {
+      __type__: 'cc.SpriteFrame',
+      _name: 'star',
+      _rect: { x: 0, y: 0, width: 32, height: 32 },
+      _offset: { x: 0, y: 0 },
+      _originalSize: { width: 32, height: 32 },
+      _rotated: false,
+      _texture: { __uuid__: 'tex-raw' }
+    };
+
+    const writeFileSpy = jest.spyOn(
+      require('../src/utils/fileManager').fileManager, 'writeFile'
+    ).mockResolvedValue();
+
+    resourceProcessor.processSpriteFrame({ '0': spriteData }, '0', 'frame-raw');
+
+    expect(resourceProcessor.cacheWriteList.some((p) => p.endsWith('ui/icons/star.png'))).toBe(true);
+    expect(writeFileSpy).toHaveBeenCalledWith(
+      'Texture/ui/icons',
+      'star.png.meta',
+      expect.objectContaining({ ver: '1.2.7' }),
+    );
+  });
+
   test('processSpriteFrame should fallback to key-based fileMap lookup', () => {
     resourceProcessor.resetState();
     global.paths = { res: '/tmp/assets', output: '/tmp/output' };

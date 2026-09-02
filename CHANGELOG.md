@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixes
+- **Issue #33**: Write meta as `basename+ext+.meta` (e.g. `logo.png.meta`); do not emit orphan `.png.meta` when native PNG was not recovered (2.x SpriteFrame + 3.x pure-native)
+- **Issue #32 / #37**: True 3.x builds emit scenes as `.scene` (+ matching meta); classic 2.4 bundle flavor keeps `.fire`
+- Prefer colocating classic 2.x SpriteFrame meta with the `rawAssets` PNG path
+
+### Features
+- **Issue #23**: Demux packed bundle `index.js` / `game.js` into per-module files under `assets/Scripts` with `.meta` (preserves `cc._RF` UUID mounts); split multi-`System.register` chunks similarly. Raw bundle script still copied for reference; recovered script count includes split modules
+- Wire `index.jsc` / `game.jsc` decrypt on the 3.x path via existing `jscDecryptor` + `--key` / auto-key helpers
+- Honor bundle `redirect` entries when resolving assets (skip redirected uuids owned by dependency bundles)
+
+### Tests
+- Regression fixtures for correct meta names, no orphan meta without PNG, `.scene` for 3.x, `.fire` for 2.4 bundle flavor, and multi-script demux from packed `index.js`
+
 ## [2.1.1] - 2026-07-23
 
 ### Fixes

@@ -911,7 +911,6 @@ const resourceProcessor = {
   },
 
   processSpriteFrameSingle(spriteData, name, key) {
-    const dir = 'Texture';
     const uuid = this.decodeMaybe(key) || key;
 
     let texUuid = null;
@@ -924,14 +923,42 @@ const resourceProcessor = {
     }
 
     const texDecoded = this.decodeMaybe(texUuid) || texUuid;
-    const safeName = String(name).replace(/[\/\\?%*:|"<>]/g, '_');
+    let safeName = String(name).replace(/[\/\\?%*:|"<>]/g, '_');
+    let dir = 'Texture';
+    let outFile = `${safeName}.png`;
 
-    const nativeSrc = this.findNativeFile(texDecoded, texUuid, '.png')
+    // Prefer colocating with the rawAssets path when available (classic 2.x).
+    const raw = this._rawAssetMap.get(String(key))
+      || this._rawAssetMap.get(String(uuid))
+      || this._rawAssetMap.get(this.expandUuidRef(key))
+      || (texDecoded && this._rawAssetMap.get(String(texDecoded)))
+      || (texUuid && this._rawAssetMap.get(String(texUuid)));
+
+    if (raw && raw.path) {
+      const base = path.basename(raw.path);
+      const sub = path.dirname(raw.path).replace(/\\/g, '/');
+      if (sub && sub !== '.') dir = path.posix.join('Texture', sub);
+      if (/\.(png|jpe?g|webp)$/i.test(base)) {
+        outFile = base;
+        safeName = path.basename(base, path.extname(base));
+      } else {
+        safeName = path.basename(base, path.extname(base)) || safeName;
+        outFile = `${safeName}.png`;
+      }
+    }
+
+    const nativeExt = path.extname(outFile) || '.png';
+    const nativeSrc = this.findNativeFile(texDecoded, texUuid, nativeExt)
+      || this.findNativeFile(uuid, key, nativeExt)
+      || this.findNativeFile(texDecoded, texUuid, '.png')
       || this.findNativeFile(uuid, key, '.png');
 
-    if (nativeSrc) {
-      this.queueCopy(nativeSrc, path.join(global.paths.output, 'assets', dir, `${safeName}.png`));
+    // Do not write orphan .png.meta when the native PNG was not recovered (#33).
+    if (!nativeSrc) {
+      return;
     }
+
+    this.queueCopy(nativeSrc, path.join(global.paths.output, 'assets', dir, outFile));
 
     // Build rect info from content or classic fields
     const content = spriteData.content || {};
@@ -972,7 +999,7 @@ const resourceProcessor = {
       subMetas: {},
     };
 
-    this.enqueueWrite(dir, `${safeName}.png.meta`, {
+    this.enqueueWrite(dir, `${outFile}.meta`, {
       ver: '1.2.7',
       uuid: texDecoded || uuid,
       optimizationPolicy: 'AUTO',
