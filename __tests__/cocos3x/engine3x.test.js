@@ -559,9 +559,10 @@ System.register("chunks:///_virtual/Enemy.ts", ["cc"], function (e) {
     const out = path.join(tmp, 'out-dbslash');
     await reverseProject3x({ sourcePath: src, outputPath: out, assetsOnly: true });
 
-    const goodA = path.join(out, 'assets', 'main', 'assets', 'scene', 'scene.scene');
-    const goodB = path.join(out, 'assets', 'main', 'scene', 'scene.scene');
-    expect(fs.existsSync(goodA) || fs.existsSync(goodB)).toBe(true);
+    const doubleAssets = path.join(out, 'assets', 'main', 'assets', 'scene', 'scene.scene');
+    const good = path.join(out, 'assets', 'main', 'scene', 'scene.scene');
+    expect(fs.existsSync(good)).toBe(true);
+    expect(fs.existsSync(doubleAssets)).toBe(false);
     expect(fs.existsSync(path.join(out, 'assets', 'main', 'db:'))).toBe(false);
     // No path segment literally named db:
     const walk = (dir, acc = []) => {
