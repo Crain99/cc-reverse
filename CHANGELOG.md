@@ -2,34 +2,31 @@
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-09-02
+
 ### Fixes
-- Demux MD5-cache bundle scripts (`index.<hash>.js` / `game.<hash>.js`); emit fused `chunks:///main.js` packs as game `main.pack.js` (not vendor `main` stub)
-- Route engine/vendor scripts (_virtual_cc-*, spine/bullet, builtin-pipeline*, rollup helpers, bundle stubs, cocos-js) under assets/Scripts/_vendor/
-- Recovery report: game vs vendor script counts; bundle Named vs Packed columns
-- Decode Creator compressed uuids that carry `@subAsset` / `@mip@format` suffixes so `native/<2>/<decoded>@….png` lookups succeed (was leaving ids compressed when length ≠ 22)
-- Use `@suffix` as ImageAsset `subMetas` id (`6c48a` / `f9941`) so Texture2D + SpriteFrame no longer collide into one meta slot
-- Strip `/texture` / `/spriteFrame` / `@6c48a|@f9941` from output file paths; fold uuid-only `@` siblings onto parent ImageAsset (named path or `_packed/<2>/<base>`)
-- Sweep leftover `native/` files and report per-bundle native image counts (explicit “import descriptors only” note for web-mobile builds with zero image bytes)
-- Normalize `config.paths` `db://` **and** `db:/` (single-slash) prefixes so recovered assets are not written under a literal `db:` directory (real Creator 3.8 web-mobile)
-- Strip leading `assets/` after `db://`/`db:/` normalize so bundle output is `assets/<bundle>/scenes/...` not `assets/<bundle>/assets/scenes/...` (keeps `internal/...` and plain `UI_res/...` paths)
-- Treat Creator 3.x rollup `System.register("chunks:///_virtual/...")` packs as SystemJS (not browserify); demux one file per register id (`Foo.ts`) with aliased `._RF.push` UUID metas — no more bogus `setters.ts`
-- Skip anonymous / variable-id `System.register` wrappers (nested rollup shell + `mid`/`cid` reexports) so recovery no longer emits empty `module_N.js` stubs
-- **Issue #33**: Write meta as `basename+ext+.meta` (e.g. `logo.png.meta`); do not emit orphan `.png.meta` when native PNG was not recovered (2.x SpriteFrame + 3.x pure-native)
+- **3.x script demux**: Treat Creator 3.x rollup `System.register("chunks:///_virtual/...")` packs as SystemJS; demux one file per register id (e.g. `Foo.ts`) with stable `cc._RF.push` UUID metas — no more bogus `setters.ts` / empty `module_N.js` stubs
+- Demux **MD5-cache** bundle scripts (`index.<hash>.js` / `game.<hash>.js`); emit fused `chunks:///main.js` packs as game `main.pack.js` (not a vendor stub)
+- Park engine/vendor scripts (`_virtual_cc-*`, spine/bullet, builtin-pipeline*, rollup helpers, cocos-js) under `assets/Scripts/_vendor/`
+- Normalize `config.paths` `db://` **and** `db:/` (single-slash) so assets are not written under a literal `db:` directory
+- Strip leading `assets/` after `db:/` normalize — no double `assets/<bundle>/assets/...` prefix
+- Decode compressed uuids that carry `@subAsset` / `@mip@format` suffixes so `native/...@….png` lookups succeed
+- Use `@suffix` as ImageAsset `subMetas` id; strip `/texture` / `/spriteFrame` / `@6c48a|@f9941` from output paths; fold uuid-only `@` siblings onto parent ImageAsset (named or `_packed/`)
+- Sweep leftover `native/` files; report per-bundle native image counts (and an explicit “import descriptors only” note for web-mobile with zero image bytes)
+- **Issue #33**: Write meta as `basename+ext+.meta` (e.g. `logo.png.meta`); do not emit orphan `.png.meta` when native PNG was not recovered
 - **Issue #32 / #37**: True 3.x builds emit scenes as `.scene` (+ matching meta); classic 2.4 bundle flavor keeps `.fire`
-- Prefer colocating classic 2.x SpriteFrame meta with the `rawAssets` PNG path
-- **Issue #32**: Fold `Texture2D` / `SpriteFrame` marked `subAsset` into parent `ImageAsset` `.png.meta` `subMetas` (Creator layout) instead of orphan `logo@xxxx` / `spriteFrame.json` folders
-- Strip trailing RootInfo from rehydrated IFileData so Prefab/Scene emit dense `[{__type__:...}]` source JSON; rehydrate packed Prefab pack sections end-to-end
-- Demuxed / copied scripts prefer stable UUID from `cc._RF.push` (decoded) over random meta UUIDs — improves #37 script rebind
+- Fold `Texture2D` / `SpriteFrame` `subAsset` into parent `ImageAsset` `.png.meta` `subMetas` (Creator layout)
+- Strip trailing RootInfo from rehydrated IFileData; rehydrate packed Prefab pack sections end-to-end
+- Clearer recovery report: game vs vendor script counts; bundle Named vs Packed columns
 
 ### Features
-- **Issue #23**: Demux packed bundle `index.js` / `game.js` into per-module files under `assets/Scripts` with `.meta` (preserves `cc._RF` UUID mounts); split multi-`System.register` chunks similarly. Raw bundle script still copied for reference; recovered script count includes split modules
+- **Issue #23**: Demux packed bundle `index.js` / `game.js` into per-module files under `assets/Scripts` with `.meta` (preserves `cc._RF` UUID mounts)
 - Wire `index.jsc` / `game.jsc` decrypt on the 3.x path via existing `jscDecryptor` + `--key` / auto-key helpers
-- Honor bundle `redirect` entries when resolving assets (skip redirected uuids owned by dependency bundles)
+- Honor bundle `redirect` entries when resolving assets
 
 ### Tests
-- Vendor script classification + demux under _vendor/; report game/vendor + Named/Packed
-- Regression fixtures for correct meta names, no orphan meta without PNG, `.scene` for 3.x, `.fire` for 2.4 bundle flavor, and multi-script demux from packed `index.js`
-- ImageAsset subMetas folding, packed Prefab rehydrate, redirect skip count, System.register demux RF UUID stability
+- Vendor script classification + demux under `_vendor/`; report game/vendor + Named/Packed
+- Regression fixtures for meta names, no orphan meta without PNG, `.scene` for 3.x, `.fire` for 2.4, System.register demux, ImageAsset subMetas, packed Prefab rehydrate, MD5 index demux, `db:/` path strip
 
 ## [2.1.1] - 2026-07-23
 
