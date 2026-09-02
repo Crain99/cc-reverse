@@ -5,6 +5,7 @@
 ### Fixes
 - Normalize `config.paths` `db://` **and** `db:/` (single-slash) prefixes so recovered assets are not written under a literal `db:` directory (real Creator 3.8 web-mobile)
 - Treat Creator 3.x rollup `System.register("chunks:///_virtual/...")` packs as SystemJS (not browserify); demux one file per register id (`Foo.ts`) with aliased `._RF.push` UUID metas — no more bogus `setters.ts`
+- Skip anonymous / variable-id `System.register` wrappers (nested rollup shell + `mid`/`cid` reexports) so recovery no longer emits empty `module_N.js` stubs
 - **Issue #33**: Write meta as `basename+ext+.meta` (e.g. `logo.png.meta`); do not emit orphan `.png.meta` when native PNG was not recovered (2.x SpriteFrame + 3.x pure-native)
 - **Issue #32 / #37**: True 3.x builds emit scenes as `.scene` (+ matching meta); classic 2.4 bundle flavor keeps `.fire`
 - Prefer colocating classic 2.x SpriteFrame meta with the `rawAssets` PNG path
