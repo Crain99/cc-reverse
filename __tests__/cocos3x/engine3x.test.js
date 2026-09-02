@@ -4,7 +4,9 @@ const path = require('path');
 const {
   reverseProject3x,
   parentPathOfSubAsset,
+  normalizeAssetFilePath,
   indexImageSubAssets,
+  shortMetaId,
   extractRfUuid,
   splitSystemRegisterSource,
   sanitizeScriptFileName,
@@ -676,6 +678,7 @@ describe('image subAsset path helpers', () => {
 
   it('indexes subAssets onto parent paths', () => {
     const cfg = {
+      uuids: ['u-img', 'u-tex', 'u-sf'],
       paths: {
         'u-img': { path: 'textures/logo', type: 'cc.ImageAsset', subAsset: false },
         'u-tex': { path: 'textures/logo@6c48a', type: 'cc.Texture2D', subAsset: true },
@@ -687,4 +690,121 @@ describe('image subAsset path helpers', () => {
     expect(childUuids.has('u-sf')).toBe(true);
     expect(byParent.get('textures/logo')).toHaveLength(2);
   });
+
+  it('strips /texture and @suffix from asset file paths', () => {
+    expect(normalizeAssetFilePath('UI_res/headimage/texture')).toBe('UI_res/headimage');
+    expect(normalizeAssetFilePath('UI_res/headimage/spriteFrame')).toBe('UI_res/headimage');
+    expect(normalizeAssetFilePath('db_stripped/logo@6c48a')).toBe('db_stripped/logo');
+    expect(normalizeAssetFilePath('UI_res/headimage')).toBe('UI_res/headimage');
+  });
+
+  it('uses @suffix as shortMetaId so texture/spriteFrame do not collide', () => {
+    const base = '0732b29a-d743-449d-aae6-331e8bcda30a';
+    expect(shortMetaId(`${base}@6c48a`)).toBe('6c48a');
+    expect(shortMetaId(`${base}@f9941`)).toBe('f9941');
+    expect(shortMetaId('u-tex')).toBe('utex'); // dashes stripped, first 5
+  });
+
+  it('folds uuid-only @6c48a/@f9941 onto _packed parent path', () => {
+    const base = '20835ba4-6145-4fbc-a58a-051ce700aa3e';
+    const cfg = {
+      uuids: [base, `${base}@6c48a`, `${base}@f9941`],
+      paths: {},
+    };
+    const { byParent, childUuids } = indexImageSubAssets(cfg);
+    expect(childUuids.has(`${base}@6c48a`)).toBe(true);
+    expect(childUuids.has(`${base}@f9941`)).toBe(true);
+    const parent = `_packed/${base.slice(0, 2)}/${base}`;
+    expect(byParent.get(parent)).toHaveLength(2);
+  });
 });
+
+describe('reverseProject3x — packed natives with @ uuids', () => {
+  let tmp;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-reverse3x-packnat-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function writeFile(p, content) {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, content);
+  }
+
+  it('recovers named ImageAsset + folds @subAssets; maps compressed @ native', async () => {
+    const src = path.join(tmp, 'tex-build');
+    writeFile(path.join(src, 'application.js'), '// launcher');
+    writeFile(path.join(src, 'src', 'settings.json'), '{}');
+
+    // Real-style compressed ids (22-char) + @suffixes, debug:false so decode runs.
+    const imgComp = '07MrKa10NEnarmMx6LzaMK'; // -> 0732b29a-...
+    const texComp = `${imgComp}@6c48a`;
+    const sfComp = `${imgComp}@f9941`;
+    const orphanComp = '6fAc9/gb9Kfr1dCvwZaWSA@b47c0@40c10'; // mip/format native
+
+    const imgUuid = uuidUtils.decodeUuid(imgComp);
+    const orphanUuid = uuidUtils.decodeUuid(orphanComp);
+
+    const bundleDir = path.join(src, 'assets', 'resources');
+    const config = {
+      name: 'resources',
+      debug: false,
+      importBase: 'import',
+      nativeBase: 'native',
+      uuids: [imgComp, texComp, sfComp, orphanComp],
+      paths: {
+        0: ['UI_res/headimage', 0, 1],
+        1: ['UI_res/headimage/texture', 1, 1],
+        2: ['UI_res/headimage/spriteFrame', 2, 1],
+      },
+      types: ['cc.ImageAsset', 'cc.Texture2D', 'cc.SpriteFrame'],
+      scenes: {},
+      packs: {},
+      extensionMap: {},
+      versions: { import: [], native: [] },
+    };
+    writeFile(path.join(bundleDir, 'config.json'), JSON.stringify(config));
+    writeFile(
+      path.join(bundleDir, 'import', imgUuid.slice(0, 2), `${imgUuid}.json`),
+      JSON.stringify([1, 0, 0, ['cc.ImageAsset'], 0, [{ fmt: '0', w: 8, h: 8 }, -1], [0], 0, [], [], []]),
+    );
+    // Named native under decoded uuid
+    writeFile(path.join(bundleDir, 'native', imgUuid.slice(0, 2), `${imgUuid}.png`), 'PNGDATA');
+    // Orphan compressed-format native (no path entry)
+    writeFile(
+      path.join(bundleDir, 'native', orphanUuid.slice(0, 2), `${orphanUuid}.png`),
+      'PNGORPHAN',
+    );
+
+    const out = path.join(tmp, 'out-tex');
+    const summary = await reverseProject3x({ sourcePath: src, outputPath: out, assetsOnly: true });
+
+    // Prefer real name over _packed
+    expect(fs.existsSync(path.join(out, 'assets', 'resources', 'UI_res', 'headimage.png'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'resources', 'UI_res', 'headimage', 'texture.png'))).toBe(false);
+
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(out, 'assets', 'resources', 'UI_res', 'headimage.png.meta'), 'utf8'),
+    );
+    expect(meta.uuid).toBe(imgUuid);
+    expect(Object.keys(meta.subMetas).sort()).toEqual(['6c48a', 'f9941']);
+    expect(meta.subMetas['6c48a'].displayName).toBe('texture');
+    expect(meta.subMetas['f9941'].displayName).toBe('spriteFrame');
+    expect(meta.subMetas['6c48a'].uuid).toBe(uuidUtils.decodeUuid(texComp));
+
+    // Compressed @mip@fmt native recovered (under _packed — no config path)
+    const orphanOut = path.join(
+      out, 'assets', 'resources', '_packed', orphanUuid.slice(0, 2), `${orphanUuid}.png`,
+    );
+    expect(fs.existsSync(orphanOut)).toBe(true);
+    expect(fs.readFileSync(orphanOut, 'utf8')).toBe('PNGORPHAN');
+
+    const resBundle = summary.bundles.find((b) => b.name === 'resources');
+    expect(resBundle.nativeImages).toBeGreaterThanOrEqual(2);
+  });
+});
+

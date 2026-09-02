@@ -34,11 +34,16 @@ const uuidUtils = {
   },
 
   /**
-   * 将 Base64 编码的 UUID 转换为标准 UUID 格式
-   * 示例: fcmR3XADNLgJ1ByKhqcC5Z -> fc991dd7-0033-4b80-9d41-c8a86a702e59
+   * Decode a Creator compressed uuid. Handles plain 22-char ids and the
+   * common `@subAsset` / `@mip@format` suffixes used by Texture2D / SpriteFrame
+   * / compressed natives, e.g.:
+   *   20g1ukYUVPvKWKBRznAKo+@6c48a
+   *     -> 20835ba4-6145-4fbc-a58a-051ce700aa3e@6c48a
+   *   6fAc9/gb9Kfr1dCvwZaWSA@b47c0@40c10
+   *     -> 6f01cf7f-81bf-4a7e-bd5d-0afc19696480@b47c0@40c10
    *
-   * @param {string} base64 Base64 编码的 UUID
-   * @returns {string} 标准格式的 UUID
+   * Without this, native/<2>/<decodedUuid>@….png lookups miss because the
+   * uuid table keeps the still-compressed base.
    */
   decodeUuid(base64) {
     if (typeof base64 !== 'string') {
@@ -46,26 +51,35 @@ const uuidUtils = {
       return undefined;
     }
 
-    if (base64.length !== 22) {
+    // Preserve @suffix(es); only the 22-char head is base64-compressed.
+    let suffix = '';
+    let head = base64;
+    const at = base64.indexOf('@');
+    if (at >= 0) {
+      head = base64.slice(0, at);
+      suffix = base64.slice(at); // includes leading '@'
+    }
+
+    if (head.length !== 22) {
       return base64;
     }
 
     try {
       // 每次拷贝模板，避免共享可变数组被并发写坏
       const template = UuidTemplate.slice();
-      template[0] = base64[0];
-      template[1] = base64[1];
+      template[0] = head[0];
+      template[1] = head[1];
 
       for (let i = 2, j = 2; i < 22; i += 2) {
-        const lhs = BASE64_VALUES[base64.charCodeAt(i)];
-        const rhs = BASE64_VALUES[base64.charCodeAt(i + 1)];
+        const lhs = BASE64_VALUES[head.charCodeAt(i)];
+        const rhs = BASE64_VALUES[head.charCodeAt(i + 1)];
 
         template[Indices[j++]] = HexChars[lhs >> 2];
         template[Indices[j++]] = HexChars[((lhs & 3) << 2) | (rhs >> 4)];
         template[Indices[j++]] = HexChars[rhs & 0xF];
       }
 
-      return template.join('');
+      return template.join('') + suffix;
     } catch (err) {
       logger.error('解码 UUID 时出错:', err);
       return base64;

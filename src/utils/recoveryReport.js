@@ -74,6 +74,27 @@ async function writeRecoveryReport(outputPath, summary, sourcePath) {
           `| ${b.name} | ${b.encrypted ? 'yes' : 'no'} | ${b.uuidCount} | ${b.pathCount} | ${b.recovered} | ${b.missing} |`,
         );
       }
+      lines.push('');
+      lines.push('### Native media');
+      lines.push('');
+      let anyNativeNote = false;
+      for (const b of summary.bundles) {
+        if (b.nativeFiles == null && b.nativeImages == null) continue;
+        anyNativeNote = true;
+        const imgs = b.nativeImages ?? 0;
+        const files = b.nativeFiles ?? 0;
+        lines.push(`- **${b.name}**: ${imgs} image(s), ${files} native file(s)`);
+        if (Array.isArray(b.sampleNativePaths) && b.sampleNativePaths.length) {
+          for (const p of b.sampleNativePaths.slice(0, 5)) {
+            lines.push(`  - \`${p}\``);
+          }
+        } else if (imgs === 0) {
+          lines.push('  - _(no native image bytes — import descriptors only)_');
+        }
+      }
+      if (!anyNativeNote) {
+        lines.push('_Native image stats unavailable._');
+      }
     }
     lines.push('');
   }

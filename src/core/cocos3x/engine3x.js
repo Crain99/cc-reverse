@@ -324,8 +324,13 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
     recovered: 0,
     missing: 0,
     redirected: 0,
+    nativeFiles: 0,
+    nativeImages: 0,
+    sampleNativePaths: [],
     warnings: [],
   };
+  // Shared across concurrent unpackAsset calls — only push samples under lock-free cap.
+  cfg._nativeStats = result;
 
   // Track which uuids we've already processed so we don't duplicate work when
   // a uuid appears in both `paths` and `scenes` and the catch-all uuids pass.
@@ -419,6 +424,22 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
     }
   });
 
+  // 4) Sweep native/ for files whose uuid never appeared in config.uuids
+  //    (or whose decode previously missed). Copy leftovers under _packed.
+  await sweepOrphanNatives(cfg, bundleOut, handled, result);
+
+  if (result.nativeImages === 0) {
+    logger.info(
+      `Bundle "${cfg.name}": no native image bytes recovered `
+      + `(import JSON/cconb descriptors only — common for web-mobile)`,
+    );
+  } else {
+    logger.info(
+      `Bundle "${cfg.name}": ${result.nativeImages} native image(s), `
+      + `${result.nativeFiles} native file(s) total`,
+    );
+  }
+
   // Preserve the original config.json for reference — useful when a user wants
   // to re-pack or debug.
   await copyFile(cfgPath, path.join(bundleOut, 'config.original.json'));
@@ -443,10 +464,12 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, flavor }) {
   const nativeSrc = nativeExt ? getNativePath(cfg, uuid, nativeExt) : null;
 
   // Choose an output path. Prefer the project path from config.paths — that's
-  // what the editor will see.
+  // what the editor will see. Strip `/texture` / `@6c48a` subAsset segments so
+  // natives never land under a fake `…/texture.png` leaf.
   const className = info.type || 'cc.Asset';
   const outDir = classOutputDir(className);
-  const relPath = normalizeDbAssetPath(info.path) || `${outDir}/${uuid}`;
+  const rawRel = normalizeDbAssetPath(info.path) || `${outDir}/${uuid}`;
+  const relPath = normalizeAssetFilePath(rawRel) || rawRel;
   const outBase = path.join(bundleOut, relPath);
   await mkdir(path.dirname(outBase), { recursive: true });
 
@@ -543,6 +566,18 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, flavor }) {
     }
   }
 
+  if (nativeRecovered && cfg._nativeStats) {
+    cfg._nativeStats.nativeFiles += 1;
+    const extLower = (recoveredNativeExt || '').toLowerCase();
+    if (['.png', '.jpg', '.jpeg', '.webp', '.pvr', '.pkm', '.astc'].includes(extLower)) {
+      cfg._nativeStats.nativeImages += 1;
+    }
+    const samples = cfg._nativeStats.sampleNativePaths;
+    if (samples.length < 8) {
+      samples.push(relPath + (recoveredNativeExt || ''));
+    }
+  }
+
   // --- Packed asset (extract section from IPackedFileData) ---
   if (!importRecovered && cfg._packIndex && cfg._packIndex[uuid]) {
     const { packUuid, position } = cfg._packIndex[uuid];
@@ -584,21 +619,63 @@ function indexImageSubAssets(cfg) {
   const byParent = new Map();
   const childUuids = new Set();
   const paths = cfg.paths || {};
-  for (const uuid of Object.keys(paths)) {
-    const info = paths[uuid];
-    if (!info || !info.subAsset) continue;
-    const parentPath = parentPathOfSubAsset(info.path);
-    if (!parentPath) continue;
-    const displayName = displayNameOfSubAsset(info.path, info.type);
+
+  const addChild = (parentPath, uuid, type, relPath) => {
+    if (!parentPath || !uuid || childUuids.has(uuid)) return;
+    const displayName = displayNameOfSubAsset(relPath || uuid, type);
     if (!byParent.has(parentPath)) byParent.set(parentPath, []);
     byParent.get(parentPath).push({
       uuid,
-      type: info.type,
-      path: info.path,
+      type: type || null,
+      path: relPath || null,
       displayName,
     });
     childUuids.add(uuid);
+  };
+
+  // 1) Named subAssets from config.paths (Texture2D / SpriteFrame).
+  for (const uuid of Object.keys(paths)) {
+    const info = paths[uuid];
+    if (!info) continue;
+    const parentPath = parentPathOfSubAsset(info.path);
+    // Require a recognizable parent path shape — the release `paths` third
+    // field is often `1` even for ImageAsset/SceneAsset, so don't trust the
+    // flag alone.
+    if (!parentPath) continue;
+    if (!info.subAsset && info.type !== 'cc.Texture2D' && info.type !== 'cc.SpriteFrame') {
+      continue;
+    }
+    addChild(parentPath, uuid, info.type, info.path);
   }
+
+  // 2) UUID-only `@6c48a` / `@f9941` siblings (common in scene bundles where
+  //    the ImageAsset has no addressable path). Fold onto the parent's path
+  //    when known, otherwise onto the same `_packed/<2>/<base>` slot the
+  //    catch-all pass uses for the parent ImageAsset.
+  const uuidSet = new Set(cfg.uuids || []);
+  for (const uuid of cfg.uuids || []) {
+    if (childUuids.has(uuid)) continue;
+    const at = uuid.indexOf('@');
+    if (at <= 0) continue;
+    const suffix = uuid.slice(at + 1);
+    // Skip multi-@ compressed format variants (uuid@mip@astc) — those are
+    // separate native blobs, not ImageAsset subMetas.
+    if (!suffix || suffix.includes('@')) continue;
+    const base = uuid.slice(0, at);
+    if (!uuidSet.has(base) && !paths[base]) continue;
+
+    let parentPath = null;
+    if (paths[base] && paths[base].path) {
+      parentPath = parentPathOfSubAsset(paths[base].path) || paths[base].path;
+    } else {
+      parentPath = `_packed/${base.slice(0, 2)}/${base}`;
+    }
+    const typeHint = /^f9941$/i.test(suffix)
+      ? 'cc.SpriteFrame'
+      : (/^6c48a$/i.test(suffix) ? 'cc.Texture2D' : null);
+    addChild(parentPath, uuid, typeHint, paths[uuid] ? paths[uuid].path : null);
+  }
+
   return { byParent, childUuids };
 }
 
@@ -608,6 +685,21 @@ function parentPathOfSubAsset(relPath) {
   if (at > 0) return relPath.slice(0, at);
   const m = relPath.match(/^(.*)\/(texture|spriteFrame|sprite-frame)$/i);
   return m ? m[1] : null;
+}
+
+/**
+ * Choose the on-disk file path for an asset. Strips Creator ImageAsset subAsset
+ * segments (`/texture`, `/spriteFrame`, `@6c48a`, `@f9941`) so natives never
+ * land at `UI_res/headimage/texture.png`. Does NOT strip mip/format suffixes
+ * like `@b47c0@40c10` — those are distinct native blobs.
+ */
+function normalizeAssetFilePath(relPath) {
+  if (!relPath || typeof relPath !== 'string') return relPath;
+  const slash = relPath.match(/^(.*)\/(texture|spriteFrame|sprite-frame)$/i);
+  if (slash) return slash[1];
+  const atKnown = relPath.match(/^(.*)@(6c48a|f9941)$/i);
+  if (atKnown) return atKnown[1];
+  return relPath;
 }
 
 function displayNameOfSubAsset(relPath, type) {
@@ -623,7 +715,14 @@ function displayNameOfSubAsset(relPath, type) {
 }
 
 function shortMetaId(uuid) {
-  const hex = String(uuid || '').replace(/-/g, '');
+  const s = String(uuid || '');
+  // Creator sub-assets use the @suffix as the meta id (6c48a / f9941). Using the
+  // compressed-base prefix collided Texture2D + SpriteFrame into one slot.
+  const at = s.lastIndexOf('@');
+  if (at >= 0 && at < s.length - 1) {
+    return (s.slice(at + 1) || '00000').toLowerCase();
+  }
+  const hex = s.replace(/-/g, '');
   return (hex.slice(0, 5) || '00000').toLowerCase();
 }
 
@@ -669,6 +768,84 @@ function classOutputDir(className) {
  * Last-resort: scan native/<2>/ for any file whose basename matches `uuid`.
  * Returns { src, ext } or null.
  */
+/**
+ * Copy native files that were never claimed by a uuid in config.uuids.
+ * Filenames look like `<uuid>[@mip][@fmt].<ext>` under native/<2>/.
+ */
+async function sweepOrphanNatives(cfg, bundleOut, handled, result) {
+  const nativeRoot = path.join(cfg.baseDir, cfg.nativeBase);
+  if (!fs.existsSync(nativeRoot)) return;
+
+  let prefixes;
+  try {
+    prefixes = await readdir(nativeRoot, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  // Build a set of uuid stems we already recovered natives for (exact + base).
+  const claimed = new Set();
+  for (const u of handled) {
+    if (!u) continue;
+    claimed.add(u);
+    const at = u.indexOf('@');
+    if (at > 0) claimed.add(u.slice(0, at));
+  }
+
+  for (const pref of prefixes) {
+    if (!pref.isDirectory()) continue;
+    const dir = path.join(nativeRoot, pref.name);
+    let entries;
+    try {
+      entries = await readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const m = entry.match(/^([0-9a-fA-F-]{36}(?:@[0-9a-zA-Z]+)*)(\.[^.]+)$/);
+      if (!m) continue;
+      const fileUuid = m[1];
+      const ext = m[2];
+      // Skip if this exact uuid was handled, or its base ImageAsset was handled
+      // and this is a simple @6c48a/@f9941 meta-only id without its own bytes
+      // already claimed via glob on the parent… Still copy distinct @mip@fmt.
+      if (handled.has(fileUuid)) continue;
+      const base = fileUuid.indexOf('@') > 0 ? fileUuid.slice(0, fileUuid.indexOf('@')) : fileUuid;
+      // If the exact file was already copied as the native of `fileUuid` or
+      // `base` (same basename), skip. We detect via output existence.
+      const rel = `_packed/${fileUuid.slice(0, 2)}/${fileUuid}`;
+      const dest = path.join(bundleOut, rel + ext);
+      if (fs.existsSync(dest)) continue;
+      // Also skip when parent ImageAsset already took a same-ext native at its
+      // path and this entry is only `@6c48a`/`@f9941` (no extra mip/format).
+      const suffix = fileUuid.includes('@') ? fileUuid.slice(fileUuid.indexOf('@') + 1) : '';
+      if (suffix && !suffix.includes('@') && /^(6c48a|f9941)$/i.test(suffix)) {
+        continue; // meta-only subAsset ids — no separate native expected
+      }
+      if (claimed.has(fileUuid)) continue;
+
+      const src = path.join(dir, entry);
+      try {
+        await mkdir(path.dirname(dest), { recursive: true });
+        await copyFile(src, dest);
+        result.nativeFiles += 1;
+        const extLower = ext.toLowerCase();
+        if (['.png', '.jpg', '.jpeg', '.webp', '.pvr', '.pkm', '.astc'].includes(extLower)) {
+          result.nativeImages += 1;
+        }
+        if (result.sampleNativePaths.length < 8) {
+          result.sampleNativePaths.push(rel + ext);
+        }
+        // Mark handled so we don't double-count if called twice.
+        handled.add(fileUuid);
+        logger.debug(`Orphan native: ${rel}${ext}`);
+      } catch (err) {
+        logger.debug(`Orphan native skip ${entry}: ${err.message}`);
+      }
+    }
+  }
+}
+
 async function globNativeByUuid(cfg, uuid) {
   const dir = path.join(cfg.baseDir, cfg.nativeBase, uuid.slice(0, 2));
   if (!fs.existsSync(dir)) return null;
@@ -1318,7 +1495,9 @@ module.exports = {
   sanitizeScriptFileName,
   indexImageSubAssets,
   parentPathOfSubAsset,
+  normalizeAssetFilePath,
   buildImageSubMetas,
+  shortMetaId,
   extractRfUuid,
 };
 

@@ -197,3 +197,32 @@ describe('parseBundleConfig — real 3.8 db:/ paths', () => {
     expect(cfg.paths['u-scene'].path.includes('db:')).toBe(false);
   });
 });
+
+
+describe('parseBundleConfig — @suffix uuid decode', () => {
+  it('decodes compressed uuids that carry @6c48a / @mip@fmt suffixes', () => {
+    const raw = {
+      name: 'main',
+      debug: false,
+      importBase: 'import',
+      nativeBase: 'native',
+      uuids: [
+        '20g1ukYUVPvKWKBRznAKo+',
+        '20g1ukYUVPvKWKBRznAKo+@6c48a',
+        '6fAc9/gb9Kfr1dCvwZaWSA@b47c0@40c10',
+      ],
+      paths: {},
+      types: [],
+      versions: { import: [], native: [] },
+      extensionMap: {},
+    };
+    const cfg = parseBundleConfig(raw, '/fake/main');
+    expect(cfg.uuids[0]).toBe('20835ba4-6145-4fbc-a58a-051ce700aa3e');
+    expect(cfg.uuids[1]).toBe('20835ba4-6145-4fbc-a58a-051ce700aa3e@6c48a');
+    expect(cfg.uuids[2]).toBe('6f01cf7f-81bf-4a7e-bd5d-0afc19696480@b47c0@40c10');
+    const native = getNativePath(cfg, cfg.uuids[2], '.png');
+    expect(native.replace(/\\/g, '/')).toMatch(
+      /native\/6f\/6f01cf7f-81bf-4a7e-bd5d-0afc19696480@b47c0@40c10\.png$/,
+    );
+  });
+});
