@@ -1,7 +1,14 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { reverseProject3x } = require('../../src/core/cocos3x/engine3x');
+const {
+  reverseProject3x,
+  parentPathOfSubAsset,
+  indexImageSubAssets,
+  extractRfUuid,
+} = require('../../src/core/cocos3x/engine3x');
+const { uuidUtils } = require('../../src/utils/uuidUtils');
+const { DataTypeID } = require('../../src/core/cocos3x/rehydrate');
 
 describe('reverseProject3x — end-to-end on a synthetic fixture', () => {
   let tmp;
@@ -258,6 +265,12 @@ cc._RF.pop();
     expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'scripts', 'Bar.ts'))).toBe(true);
     expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'scripts', 'Foo.ts.meta'))).toBe(true);
     expect(summary.scripts.total).toBeGreaterThanOrEqual(2);
+
+    // Stable UUID from cc._RF.push (decoded), not a random one.
+    const fooMeta = JSON.parse(
+      fs.readFileSync(path.join(out, 'assets', 'Scripts', 'scripts', 'Foo.ts.meta'), 'utf8'),
+    );
+    expect(fooMeta.uuid).toBe(uuidUtils.decodeUuid('fcmR3XADNLgJ1ByKhqcC5Z'));
   });
 
   it('keeps .fire for 2.4.x-bundle flavor scenes', async () => {
@@ -291,4 +304,251 @@ cc._RF.pop();
     expect(fs.existsSync(path.join(out, 'assets', 'main', 'scenes', 'Main.scene'))).toBe(false);
   });
 
+  it('folds Texture2D/SpriteFrame subAssets into ImageAsset .png.meta subMetas', async () => {
+    const src = path.join(tmp, 'img-sub-build');
+    writeFile(path.join(src, 'application.js'), '// launcher');
+    writeFile(path.join(src, 'src', 'settings.json'), '{}');
+
+    const bundleDir = path.join(src, 'assets', 'main');
+    const config = {
+      name: 'main',
+      debug: true,
+      importBase: 'import',
+      nativeBase: 'native',
+      uuids: ['u-img', 'u-tex', 'u-sf'],
+      paths: {
+        0: ['textures/logo', 0],
+        1: ['textures/logo@6c48a', 1, 1],
+        2: ['textures/logo@f9941', 2, 1],
+      },
+      types: ['cc.ImageAsset', 'cc.Texture2D', 'cc.SpriteFrame'],
+      scenes: {},
+      extensionMap: { '.png': ['u-img'] },
+      versions: { import: [], native: [] },
+    };
+    writeFile(path.join(bundleDir, 'config.json'), JSON.stringify(config));
+    writeFile(
+      path.join(bundleDir, 'import', 'u-', 'u-img.json'),
+      JSON.stringify({ __type__: 'cc.ImageAsset', _name: 'logo' }),
+    );
+    writeFile(
+      path.join(bundleDir, 'import', 'u-', 'u-tex.json'),
+      JSON.stringify({ __type__: 'cc.Texture2D', _name: 'logo' }),
+    );
+    writeFile(
+      path.join(bundleDir, 'import', 'u-', 'u-sf.json'),
+      JSON.stringify({ __type__: 'cc.SpriteFrame', _name: 'logo' }),
+    );
+    writeFile(path.join(bundleDir, 'native', 'u-', 'u-img.png'), 'PNGDATA');
+
+    const out = path.join(tmp, 'out-img-sub');
+    await reverseProject3x({ sourcePath: src, outputPath: out, assetsOnly: true });
+
+    expect(fs.existsSync(path.join(out, 'assets', 'main', 'textures', 'logo.png'))).toBe(true);
+    const metaPath = path.join(out, 'assets', 'main', 'textures', 'logo.png.meta');
+    expect(fs.existsSync(metaPath)).toBe(true);
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    expect(meta.uuid).toBe('u-img');
+    expect(meta.importer).toBe('image');
+    expect(Object.keys(meta.subMetas).length).toBe(2);
+    const vals = Object.values(meta.subMetas);
+    expect(vals.map((v) => v.displayName).sort()).toEqual(['spriteFrame', 'texture']);
+    expect(vals.find((v) => v.displayName === 'texture').uuid).toBe('u-tex');
+    expect(vals.find((v) => v.displayName === 'spriteFrame').uuid).toBe('u-sf');
+
+    // No orphan subAsset folders / loose spriteFrame.json
+    expect(fs.existsSync(path.join(out, 'assets', 'main', 'textures', 'logo@6c48a'))).toBe(false);
+    expect(fs.existsSync(path.join(out, 'assets', 'main', 'textures', 'logo@f9941'))).toBe(false);
+  });
+
+  it('rehydrates packed Prefab sections to Creator source-shaped JSON', async () => {
+    const src = path.join(tmp, 'packed-prefab-build');
+    writeFile(path.join(src, 'application.js'), '// launcher');
+    writeFile(path.join(src, 'src', 'settings.json'), '{}');
+
+    const bundleDir = path.join(src, 'assets', 'main');
+    const packUuid = 'u-pack01';
+    const prefabUuid = 'u-prefab1';
+    const config = {
+      name: 'main',
+      debug: true,
+      importBase: 'import',
+      nativeBase: 'native',
+      uuids: [prefabUuid, packUuid],
+      paths: {
+        0: ['prefabs/Button', 0],
+      },
+      types: ['cc.Prefab'],
+      scenes: {},
+      packs: {
+        [packUuid]: [0],
+      },
+      extensionMap: {},
+      versions: { import: [], native: [] },
+    };
+    writeFile(path.join(bundleDir, 'config.json'), JSON.stringify(config));
+
+    // IPackedFileData: shared header + one Prefab section (no standalone import).
+    const section = [
+      [
+        [0, 'Button', 1],
+        [1, 'Button', []],
+        0,
+      ],
+      0,
+      null,
+      [],
+      [],
+      [],
+    ];
+    const packDoc = [
+      1,
+      [],
+      [],
+      [
+        ['cc.Prefab', ['_name', 'data'], 2, DataTypeID.InstanceRef],
+        ['cc.Node', ['_name', '_children'], 2, DataTypeID.Array_InstanceRef],
+      ],
+      [
+        [0, 0, 1, 2],
+        [1, 0, 1, 2],
+      ],
+      [section],
+    ];
+    writeFile(
+      path.join(bundleDir, 'import', packUuid.slice(0, 2), `${packUuid}.json`),
+      JSON.stringify(packDoc),
+    );
+
+    const out = path.join(tmp, 'out-packed-prefab');
+    await reverseProject3x({ sourcePath: src, outputPath: out, assetsOnly: true });
+
+    const prefabPath = path.join(out, 'assets', 'main', 'prefabs', 'Button.prefab');
+    expect(fs.existsSync(prefabPath)).toBe(true);
+    const doc = JSON.parse(fs.readFileSync(prefabPath, 'utf8'));
+    expect(Array.isArray(doc)).toBe(true);
+    expect(doc[0].__type__).toBe('cc.Prefab');
+    expect(doc[0].data).toEqual({ __id__: 1 });
+    expect(doc[1].__type__).toBe('cc.Node');
+    expect(doc[1]._name).toBe('Button');
+    expect(typeof doc[doc.length - 1]).not.toBe('number');
+  });
+
+  it('skips redirected uuids owned by dependency bundles', async () => {
+    const src = path.join(tmp, 'redirect-build');
+    writeFile(path.join(src, 'application.js'), '// launcher');
+    writeFile(path.join(src, 'src', 'settings.json'), '{}');
+
+    const bundleDir = path.join(src, 'assets', 'main');
+    const config = {
+      name: 'main',
+      debug: true,
+      importBase: 'import',
+      nativeBase: 'native',
+      deps: ['resources'],
+      uuids: ['u-local', 'u-remote'],
+      paths: {
+        0: ['textures/local', 0],
+        1: ['textures/remote', 0],
+      },
+      types: ['cc.Texture2D'],
+      scenes: {},
+      redirect: [1, 0],
+      extensionMap: { '.png': ['u-local'] },
+      versions: { import: [], native: [] },
+    };
+    writeFile(path.join(bundleDir, 'config.json'), JSON.stringify(config));
+    writeFile(
+      path.join(bundleDir, 'import', 'u-', 'u-local.json'),
+      JSON.stringify({ __type__: 'cc.Texture2D', _name: 'local' }),
+    );
+    writeFile(path.join(bundleDir, 'native', 'u-', 'u-local.png'), 'PNG');
+
+    const out = path.join(tmp, 'out-redirect');
+    const summary = await reverseProject3x({
+      sourcePath: src,
+      outputPath: out,
+      assetsOnly: true,
+    });
+
+    expect(summary.bundles[0].redirected).toBe(1);
+    expect(fs.existsSync(path.join(out, 'assets', 'main', 'textures', 'local.png'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'main', 'textures', 'remote.png'))).toBe(false);
+  });
+
+  it('demuxes multi System.register chunks with stable RF uuids', async () => {
+    const src = path.join(tmp, 'sysreg-build');
+    writeFile(path.join(src, 'application.js'), '// launcher');
+    writeFile(path.join(src, 'src', 'settings.json'), '{}');
+
+    const bundleDir = path.join(src, 'assets', 'main');
+    writeFile(
+      path.join(bundleDir, 'config.json'),
+      JSON.stringify({
+        name: 'main',
+        debug: true,
+        importBase: 'import',
+        nativeBase: 'native',
+        uuids: [],
+        paths: {},
+        types: [],
+        scenes: {},
+        extensionMap: {},
+        versions: { import: [], native: [] },
+      }),
+    );
+
+    const chunk = `
+System.register("chunks:///_virtual/Hero.ts", ["cc"], function (e) {
+  cc._RF.push(module, "fcmR3XADNLgJ1ByKhqcC5Z", "Hero");
+  e("Hero", class Hero {});
+  cc._RF.pop();
+});
+System.register("chunks:///_virtual/Enemy.ts", ["cc"], function (e) {
+  cc._RF.push(module, "68076EFnW1JeZUzdnbOOKNr", "Enemy");
+  e("Enemy", class Enemy {});
+  cc._RF.pop();
+});
+`;
+    writeFile(path.join(src, 'src', 'chunks', 'bundle.js'), chunk);
+
+    const out = path.join(tmp, 'out-sysreg');
+    const summary = await reverseProject3x({ sourcePath: src, outputPath: out });
+
+    expect(summary.scripts.total).toBeGreaterThanOrEqual(2);
+    const heroMetaPath = path.join(out, 'assets', 'Scripts', 'chunks___virtual_Hero.ts.js.meta');
+    // sanitize turns chunks:///_virtual/Hero.ts → chunks___virtual_Hero.ts
+    const scriptsDir = path.join(out, 'assets', 'Scripts');
+    const metas = fs.readdirSync(scriptsDir).filter((f) => f.endsWith('.meta'));
+    expect(metas.length).toBeGreaterThanOrEqual(2);
+    const heroMetaFile = metas.find((f) => /Hero/i.test(f));
+    expect(heroMetaFile).toBeTruthy();
+    const heroMeta = JSON.parse(fs.readFileSync(path.join(scriptsDir, heroMetaFile), 'utf8'));
+    expect(heroMeta.uuid).toBe(uuidUtils.decodeUuid('fcmR3XADNLgJ1ByKhqcC5Z'));
+    expect(extractRfUuid(chunk)).toBe('fcmR3XADNLgJ1ByKhqcC5Z');
+  });
+
+});
+
+describe('image subAsset path helpers', () => {
+  it('parses @id and /texture|/spriteFrame parent paths', () => {
+    expect(parentPathOfSubAsset('textures/logo@6c48a')).toBe('textures/logo');
+    expect(parentPathOfSubAsset('textures/logo/texture')).toBe('textures/logo');
+    expect(parentPathOfSubAsset('textures/logo/spriteFrame')).toBe('textures/logo');
+    expect(parentPathOfSubAsset('textures/logo')).toBeNull();
+  });
+
+  it('indexes subAssets onto parent paths', () => {
+    const cfg = {
+      paths: {
+        'u-img': { path: 'textures/logo', type: 'cc.ImageAsset', subAsset: false },
+        'u-tex': { path: 'textures/logo@6c48a', type: 'cc.Texture2D', subAsset: true },
+        'u-sf': { path: 'textures/logo/spriteFrame', type: 'cc.SpriteFrame', subAsset: true },
+      },
+    };
+    const { byParent, childUuids } = indexImageSubAssets(cfg);
+    expect(childUuids.has('u-tex')).toBe(true);
+    expect(childUuids.has('u-sf')).toBe(true);
+    expect(byParent.get('textures/logo')).toHaveLength(2);
+  });
 });

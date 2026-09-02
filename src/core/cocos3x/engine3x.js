@@ -308,6 +308,12 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
   // Remember pack files we've already copied so we only copy once per bundle.
   cfg._copiedPacks = new Set();
 
+  // Index ImageAsset children (Texture2D / SpriteFrame marked subAsset) so we
+  // can fold them into the parent .png.meta subMetas instead of orphan folders.
+  const subIndex = indexImageSubAssets(cfg);
+  cfg._imageSubByParent = subIndex.byParent;
+  cfg._foldedSubUuids = subIndex.childUuids;
+
   const result = {
     name: cfg.name,
     encrypted: cfg.encrypted,
@@ -341,6 +347,11 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
   const pathUuids = Object.keys(cfg.paths);
   await forEachPool(pathUuids, concurrency, async (uuid) => {
     if (shouldSkipRedirect(uuid)) return;
+    // Folded into parent ImageAsset .meta — do not emit orphan texture folders.
+    if (cfg._foldedSubUuids && cfg._foldedSubUuids.has(uuid)) {
+      handled.add(uuid);
+      return;
+    }
     const info = cfg.paths[uuid];
     try {
       const ok = await unpackAsset({
@@ -389,6 +400,10 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
   const packedJobs = cfg.uuids.filter((uuid) => !handled.has(uuid));
   await forEachPool(packedJobs, concurrency, async (uuid) => {
     if (shouldSkipRedirect(uuid)) return;
+    if (cfg._foldedSubUuids && cfg._foldedSubUuids.has(uuid)) {
+      handled.add(uuid);
+      return;
+    }
     const info = {
       path: `_packed/${uuid.slice(0, 2)}/${uuid}`,
       type: null,
@@ -552,9 +567,93 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, flavor }) {
     importRecovered,
     nativeExt: recoveredNativeExt,
     nativeRecovered,
+    assetPath: info.path || null,
+    subMetas: buildImageSubMetas(cfg, info),
   });
 
   return importRecovered || nativeRecovered;
+}
+
+
+/**
+ * Map Texture2D / SpriteFrame entries marked `subAsset` onto their parent
+ * ImageAsset (or Texture2D) path. Creator 3.x stores these as:
+ *   textures/logo@6c48a   or   textures/logo/texture|spriteFrame
+ */
+function indexImageSubAssets(cfg) {
+  const byParent = new Map();
+  const childUuids = new Set();
+  const paths = cfg.paths || {};
+  for (const uuid of Object.keys(paths)) {
+    const info = paths[uuid];
+    if (!info || !info.subAsset) continue;
+    const parentPath = parentPathOfSubAsset(info.path);
+    if (!parentPath) continue;
+    const displayName = displayNameOfSubAsset(info.path, info.type);
+    if (!byParent.has(parentPath)) byParent.set(parentPath, []);
+    byParent.get(parentPath).push({
+      uuid,
+      type: info.type,
+      path: info.path,
+      displayName,
+    });
+    childUuids.add(uuid);
+  }
+  return { byParent, childUuids };
+}
+
+function parentPathOfSubAsset(relPath) {
+  if (!relPath || typeof relPath !== 'string') return null;
+  const at = relPath.lastIndexOf('@');
+  if (at > 0) return relPath.slice(0, at);
+  const m = relPath.match(/^(.*)\/(texture|spriteFrame|sprite-frame)$/i);
+  return m ? m[1] : null;
+}
+
+function displayNameOfSubAsset(relPath, type) {
+  if (type === 'cc.Texture2D') return 'texture';
+  if (type === 'cc.SpriteFrame') return 'spriteFrame';
+  if (!relPath) return 'sub';
+  const at = relPath.lastIndexOf('@');
+  if (at > 0) return relPath.slice(at + 1) || 'sub';
+  const base = path.basename(relPath);
+  if (/^sprite-?frame$/i.test(base)) return 'spriteFrame';
+  if (/^texture$/i.test(base)) return 'texture';
+  return base || 'sub';
+}
+
+function shortMetaId(uuid) {
+  const hex = String(uuid || '').replace(/-/g, '');
+  return (hex.slice(0, 5) || '00000').toLowerCase();
+}
+
+/**
+ * Build Creator-layout subMetas for an ImageAsset / texture parent from folded
+ * child uuids. Returns null when nothing to fold.
+ */
+function buildImageSubMetas(cfg, info) {
+  if (!cfg || !info || !info.path) return null;
+  if (!cfg._imageSubByParent) return null;
+  const children = cfg._imageSubByParent.get(info.path);
+  if (!children || children.length === 0) return null;
+
+  const subMetas = {};
+  for (const child of children) {
+    const id = shortMetaId(child.uuid);
+    const name = child.displayName || 'sub';
+    const importer = classToImporter(child.type) || 'asset';
+    subMetas[id] = {
+      ver: '1.0.1',
+      uuid: child.uuid,
+      importer,
+      displayName: name,
+      id,
+      name,
+      userData: {},
+      subMetas: {},
+    };
+  }
+  return subMetas;
 }
 
 function classOutputDir(className) {
@@ -717,6 +816,7 @@ async function writeMeta(outBase, uuid, className, opts = {}) {
     importRecovered = false,
     nativeExt = null,
     nativeRecovered = false,
+    subMetas = null,
   } = opts;
 
   // Decide which file the meta sits beside: basename + ext + '.meta'
@@ -745,7 +845,7 @@ async function writeMeta(outBase, uuid, className, opts = {}) {
     importer: classToImporter(className),
     downloadMode: 0,
     duration: 0,
-    subMetas: {},
+    subMetas: (subMetas && typeof subMetas === 'object') ? subMetas : {},
   };
   if (wasCcon) meta.source = 'ccon';
   if (packRef) {
@@ -878,7 +978,7 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
     }
     await mkdir(path.dirname(dest), { recursive: true });
     await writeFile(dest, code);
-    await writeScriptMeta(dest);
+    await writeScriptMeta(dest, extractRfUuid(code));
     total += 1;
     if (verbose) logger.debug(`Script: ${label}`);
   });
@@ -1173,5 +1273,9 @@ module.exports = {
   writeMeta,
   splitSystemRegisterSource,
   countSystemRegisters,
+  indexImageSubAssets,
+  parentPathOfSubAsset,
+  buildImageSubMetas,
+  extractRfUuid,
 };
 
