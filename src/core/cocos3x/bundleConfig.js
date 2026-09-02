@@ -224,6 +224,42 @@ function hasBundleConfig(bundleDir, fsLike) {
   return !!findBundleConfigPath(bundleDir, fsLike);
 }
 
+/**
+ * Locate a bundle script entry. Supports plain `index.js` / `game.js` and
+ * MD5-cache names like `index.3e752.js` (Creator "MD5 Cache" build option).
+ *
+ * @param {string} bundleDir
+ * @param {'index'|'game'|string} base  filename stem without extension
+ * @param {{ readdirSync?: Function, existsSync?: Function }} [fsLike]
+ * @returns {string|null} absolute path to the script file
+ */
+function findBundleScriptPath(bundleDir, base, fsLike) {
+  const fsMod = fsLike || require('fs');
+  const stem = String(base || '').replace(/\.(js|jsc)$/i, '');
+  if (!stem) return null;
+  const plain = path.join(bundleDir, `${stem}.js`);
+  if (fsMod.existsSync(plain)) return plain;
+
+  let entries;
+  try {
+    entries = fsMod.readdirSync(bundleDir);
+  } catch {
+    return null;
+  }
+  const prefix = `${stem}.`;
+  const hashed = entries
+    .filter((name) => {
+      if (!/\.js$/i.test(name)) return false;
+      if (!name.toLowerCase().startsWith(prefix.toLowerCase())) return false;
+      // index.<hash>.js — one hash segment, no path separators
+      const mid = name.slice(prefix.length, -3);
+      return mid.length > 0 && !/[\/]/.test(mid);
+    })
+    .sort((a, b) => a.length - b.length || a.localeCompare(b));
+  if (hashed.length > 0) return path.join(bundleDir, hashed[0]);
+  return null;
+}
+
 module.exports = {
   parseBundleConfig,
   normalizeDbAssetPath,
@@ -231,4 +267,5 @@ module.exports = {
   getNativePath,
   findBundleConfigPath,
   hasBundleConfig,
+  findBundleScriptPath,
 };

@@ -634,6 +634,49 @@ System.register("chunks:///_virtual/Enemy.ts", ["cc"], function (e) {
     expect(meta.uuid).toBe(uuidUtils.decodeUuid('b2bd1+njXxJxaFY3ymm06WU'));
   });
 
+
+  it('demuxes MD5-cache index.<hash>.js fused chunks:///main.js as game main.pack.js', async () => {
+    const src = path.join(tmp, 'md5-index-build');
+    writeFile(path.join(src, 'application.js'), '// launcher');
+    writeFile(path.join(src, 'src', 'settings.json'), '{}');
+
+    const bundleDir = path.join(src, 'assets', 'main');
+    const config = {
+      name: 'main',
+      debug: true,
+      importBase: 'import',
+      nativeBase: 'native',
+      uuids: [],
+      paths: {},
+      types: [],
+      scenes: {},
+      extensionMap: {},
+      versions: { import: [], native: [] },
+    };
+    writeFile(path.join(bundleDir, 'config.deadbeef.json'), JSON.stringify(config));
+
+    // Paren-balanced factory mirroring choose-your-answer-build MD5 packs.
+    const indexJs = (
+      'System.register("chunks:///main.js",["cc"],(function(){'
+      + 'var c;return{setters:[function(m){c=m.cclegacy;}],'
+      + 'execute:function(){c._RF.push({},"aaaaaaaaaaaaaaaaaaaaaa","Game");'
+      + 'class Game{};c._RF.pop();}}));'
+    );
+    writeFile(path.join(bundleDir, 'index.3e752.js'), indexJs);
+
+    const out = path.join(tmp, 'out-md5-index');
+    const summary = await reverseProject3x({
+      sourcePath: src,
+      outputPath: out,
+      verbose: false,
+    });
+
+    expect(fs.existsSync(path.join(out, 'assets', 'main', 'index.3e752.js'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'main.pack.js'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', '_vendor', 'main.js'))).toBe(false);
+    expect(summary.scripts.game).toBeGreaterThanOrEqual(1);
+  });
+
 });
 
 describe('isEngineVendorScript / scriptOutRel', () => {
@@ -650,6 +693,8 @@ describe('isEngineVendorScript / scriptOutRel', () => {
     expect(isEngineVendorScript('internal.js')).toBe(true);
     expect(isEngineVendorScript('BirdControl.ts')).toBe(false);
     expect(isEngineVendorScript('chunks:///_virtual/GameLogic.ts')).toBe(false);
+    // Fused MD5 pack id is game content, not the `_virtual/main` stub.
+    expect(isEngineVendorScript('chunks:///main.js')).toBe(false);
   });
 
   it('routes vendor under _vendor/ and leaves game scripts at root', () => {
