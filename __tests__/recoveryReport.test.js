@@ -53,14 +53,27 @@ describe('writeRecoveryReport', () => {
     const reportPath = await writeRecoveryReport(tmp, {
       engine: '3.x',
       flavor: '3.x',
-      scripts: { total: 6 },
+      scripts: { total: 6, game: 4, vendor: 2 },
       bundles: [
-        { name: 'main', encrypted: false, uuidCount: 10, pathCount: 3, recovered: 8, missing: 0 },
+        {
+          name: 'main',
+          encrypted: false,
+          uuidCount: 10,
+          pathCount: 3,
+          recovered: 8,
+          namedRecovered: 3,
+          packedRecovered: 5,
+          missing: 0,
+        },
       ],
     }, '/src/3x');
 
     const text = fs.readFileSync(reportPath, 'utf-8');
     expect(text).toContain('| main |');
     expect(text).toContain('Files recovered: 6');
+    expect(text).toContain('Game scripts: 4');
+    expect(text).toContain('Vendor / engine scripts: 2');
+    expect(text).toContain('| Named | Packed |');
+    expect(text).toMatch(/\| main \| no \| 10 \| 3 \| 3 \| 5 \| 0 \|/);
   });
 });

@@ -29,6 +29,12 @@ async function writeRecoveryReport(outputPath, summary, sourcePath) {
     if (typeof summary.scripts.total === 'number') {
       lines.push(`- Files recovered: ${summary.scripts.total}`);
     }
+    if (typeof summary.scripts.game === 'number' || typeof summary.scripts.vendor === 'number') {
+      const g = summary.scripts.game ?? 0;
+      const v = summary.scripts.vendor ?? 0;
+      lines.push(`- Game scripts: ${g}`);
+      lines.push(`- Vendor / engine scripts: ${v} (under \`assets/Scripts/_vendor/\`)`);
+    }
     if (summary.scripts.format) lines.push(`- Format: \`${summary.scripts.format}\``);
     if (summary.scripts.extractor) lines.push(`- Extractor: \`${summary.scripts.extractor}\``);
     if (typeof summary.scripts.modules === 'number') {
@@ -67,11 +73,13 @@ async function writeRecoveryReport(outputPath, summary, sourcePath) {
     if (summary.bundles.length === 0) {
       lines.push('_No bundles recovered._');
     } else {
-      lines.push('| Name | Encrypted | UUIDs | Paths | Recovered | Missing |');
-      lines.push('| --- | --- | --- | --- | --- | --- |');
+      lines.push('| Name | Encrypted | UUIDs | Paths | Named | Packed | Missing |');
+      lines.push('| --- | --- | --- | --- | --- | --- | --- |');
       for (const b of summary.bundles) {
+        const named = b.namedRecovered != null ? b.namedRecovered : b.recovered;
+        const packed = b.packedRecovered != null ? b.packedRecovered : 0;
         lines.push(
-          `| ${b.name} | ${b.encrypted ? 'yes' : 'no'} | ${b.uuidCount} | ${b.pathCount} | ${b.recovered} | ${b.missing} |`,
+          `| ${b.name} | ${b.encrypted ? 'yes' : 'no'} | ${b.uuidCount} | ${b.pathCount} | ${named} | ${packed} | ${b.missing} |`,
         );
       }
       lines.push('');

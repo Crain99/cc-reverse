@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Fixes
+- Route engine/vendor scripts (_virtual_cc-*, spine/bullet, builtin-pipeline*, rollup helpers, bundle stubs, cocos-js) under assets/Scripts/_vendor/
+- Recovery report: game vs vendor script counts; bundle Named vs Packed columns
 - Decode Creator compressed uuids that carry `@subAsset` / `@mip@format` suffixes so `native/<2>/<decoded>@….png` lookups succeed (was leaving ids compressed when length ≠ 22)
 - Use `@suffix` as ImageAsset `subMetas` id (`6c48a` / `f9941`) so Texture2D + SpriteFrame no longer collide into one meta slot
 - Strip `/texture` / `/spriteFrame` / `@6c48a|@f9941` from output file paths; fold uuid-only `@` siblings onto parent ImageAsset (named path or `_packed/<2>/<base>`)
@@ -23,6 +25,7 @@
 - Honor bundle `redirect` entries when resolving assets (skip redirected uuids owned by dependency bundles)
 
 ### Tests
+- Vendor script classification + demux under _vendor/; report game/vendor + Named/Packed
 - Regression fixtures for correct meta names, no orphan meta without PNG, `.scene` for 3.x, `.fire` for 2.4 bundle flavor, and multi-script demux from packed `index.js`
 - ImageAsset subMetas folding, packed Prefab rehydrate, redirect skip count, System.register demux RF UUID stability
 
