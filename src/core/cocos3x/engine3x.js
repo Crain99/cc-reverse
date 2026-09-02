@@ -35,6 +35,8 @@ const { inspect } = require('./deserializer');
 const { rehydrateIFileData } = require('./rehydrate');
 const { writeCocos2xProject } = require('./projectScaffold');
 const { writeRecoveryReport } = require('../../utils/recoveryReport');
+const { decryptJscBuffer } = require('../jscDecryptor');
+const { recoverScripts2x } = require('../script');
 
 const readFile = fsp.readFile;
 const writeFile = fsp.writeFile;
@@ -108,10 +110,13 @@ async function reverseProject3x(options) {
     assetsOnly = false,
     scriptsOnly = false,
     verbose = false,
+    key = null,
   } = options;
 
   await mkdir(outputPath, { recursive: true });
   await mkdir(path.join(outputPath, 'assets'), { recursive: true });
+
+  const projectFlavor = detectProjectFlavor(sourcePath);
 
   const summary = {
     engine: '3.x',
@@ -130,7 +135,14 @@ async function reverseProject3x(options) {
         continue;
       }
       try {
-        const result = await unpackBundle({ bundleDir, outputPath, verbose });
+        const result = await unpackBundle({
+          bundleDir,
+          outputPath,
+          verbose,
+          flavor: projectFlavor.flavor,
+          key,
+          warnings: summary.warnings,
+        });
         summary.bundles.push(result);
       } catch (err) {
         logger.error(`Failed to unpack bundle ${name}:`, err);
@@ -140,10 +152,12 @@ async function reverseProject3x(options) {
   }
 
   if (!assetsOnly) {
-    summary.scripts = await recoverScripts(sourcePath, outputPath, verbose);
+    summary.scripts = await recoverScripts(sourcePath, outputPath, verbose, {
+      key,
+      warnings: summary.warnings,
+    });
   }
 
-  const projectFlavor = detectProjectFlavor(sourcePath);
   summary.flavor = projectFlavor.flavor;
 
   if (projectFlavor.flavor === '2.4.x-bundle') {
@@ -260,7 +274,7 @@ async function discoverBundles(sourcePath) {
 /**
  * Unpack a single bundle. Returns a summary record.
  */
-async function unpackBundle({ bundleDir, outputPath, verbose }) {
+async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warnings }) {
   const cfgPath = findBundleConfigPath(bundleDir);
   if (!cfgPath) {
     throw new Error(`No config.json / config.<hash>.json in ${bundleDir}`);
@@ -270,6 +284,11 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
   }
   const raw = JSON.parse(await readFile(cfgPath, 'utf-8'));
   const cfg = parseBundleConfig(raw, bundleDir);
+
+  // Decrypt index.jsc / game.jsc into adjacent .js when needed (in-memory write
+  // into the output tree later; also materialize .js beside source when missing
+  // so demux can read it). Honors --key / auto key from reverseEngine.
+  await maybeDecryptBundleScripts(bundleDir, key, warnings);
 
   logger.info(`Bundle "${cfg.name}": ${cfg.uuids.length} uuids, ${Object.keys(cfg.paths).length} paths`);
 
@@ -297,6 +316,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
     sceneCount: Object.keys(cfg.scenes).length,
     recovered: 0,
     missing: 0,
+    redirected: 0,
     warnings: [],
   };
 
@@ -305,13 +325,26 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
   const handled = new Set();
   const concurrency = getMaxParallel();
 
+  const shouldSkipRedirect = (uuid) => {
+    if (cfg.redirect && cfg.redirect[uuid]) {
+      handled.add(uuid);
+      result.redirected += 1;
+      if (verbose) {
+        logger.debug(`Skipping redirected ${uuid} → bundle ${cfg.redirect[uuid]}`);
+      }
+      return true;
+    }
+    return false;
+  };
+
   // 1) Named assets from config.paths — the user's project-visible tree.
   const pathUuids = Object.keys(cfg.paths);
   await forEachPool(pathUuids, concurrency, async (uuid) => {
+    if (shouldSkipRedirect(uuid)) return;
     const info = cfg.paths[uuid];
     try {
       const ok = await unpackAsset({
-        cfg, uuid, info, bundleOut, verbose,
+        cfg, uuid, info, bundleOut, verbose, flavor,
       });
       handled.add(uuid);
       if (ok) result.recovered += 1;
@@ -327,6 +360,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
   for (const sceneName of Object.keys(cfg.scenes)) {
     const uuid = cfg.scenes[sceneName];
     if (!uuid || handled.has(uuid)) continue;
+    if (shouldSkipRedirect(uuid)) continue;
     // Scene names use the full `db://assets/scene/foo.fire` form in 2.4+ bundles.
     const pathStr = sceneName
       .replace(/^db:\/\/(assets\/)?/, '')
@@ -340,7 +374,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
   }
   await forEachPool(sceneJobs, concurrency, async ({ uuid, sceneName, info }) => {
     try {
-      const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose });
+      const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose, flavor });
       handled.add(uuid);
       if (ok) result.recovered += 1;
       else result.missing += 1;
@@ -354,13 +388,14 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
   //    _packed/<2>/<uuid> so the editor can still resolve cross-asset refs.
   const packedJobs = cfg.uuids.filter((uuid) => !handled.has(uuid));
   await forEachPool(packedJobs, concurrency, async (uuid) => {
+    if (shouldSkipRedirect(uuid)) return;
     const info = {
       path: `_packed/${uuid.slice(0, 2)}/${uuid}`,
       type: null,
       subAsset: false,
     };
     try {
-      const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose });
+      const ok = await unpackAsset({ cfg, uuid, info, bundleOut, verbose, flavor });
       handled.add(uuid);
       if (ok) result.recovered += 1;
     } catch (err) {
@@ -374,7 +409,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
   await copyFile(cfgPath, path.join(bundleOut, 'config.original.json'));
 
   // Preserve the bundle's compiled user-script bundle (2.4+ ships this as
-  // <bundle>/game.js or <bundle>/index.js). 5MB+ on a real project.
+  // <bundle>/game.js or <bundle>/index.js). Demux happens in recoverScripts.
   for (const scriptName of ['game.js', 'index.js']) {
     const src = path.join(bundleDir, scriptName);
     if (fs.existsSync(src)) {
@@ -386,7 +421,7 @@ async function unpackBundle({ bundleDir, outputPath, verbose }) {
   return result;
 }
 
-async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
+async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, flavor }) {
   const importSrc = getImportPath(cfg, uuid, '.json');
   const importSrcCcon = getImportPath(cfg, uuid, '.cconb');
   const nativeExt = cfg.extensionMap[uuid] || null;
@@ -405,14 +440,14 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
   let importPackRef = null;
   let importRecovered = false;
   let nativeRecovered = false;
+  let recoveredNativeExt = null;
 
   // Asset-class-driven filename for the import document:
-  //   scene   -> .fire   (2.4) or .scene (3.x). We emit .fire when the doc is
-  //                 in legacy tuple form (2.4 bundles); otherwise .scene.
+  //   scene   -> .scene (true 3.x) or .fire (2.4 / classic)
   //   prefab  -> .prefab
   //   pure-native classes (Texture2D, AudioClip, TTFFont, …) skip the import
   //                 write entirely — the native file is the real asset.
-  const importExt = inferImportExt(className);
+  const importExt = inferImportExt(className, flavor);
   const skipImportWrite = isPureNativeClass(className);
 
   // --- Import document (one per asset, or inside a pack) ---
@@ -471,6 +506,7 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
   if (nativeSrc && fs.existsSync(nativeSrc)) {
     await copyFile(nativeSrc, outBase + (nativeExt || ''));
     nativeRecovered = true;
+    recoveredNativeExt = nativeExt || '';
   } else {
     let probedExt = null;
     if (importDoc) probedExt = probeNativeExtension(importDoc);
@@ -479,6 +515,7 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
       if (probedSrc && fs.existsSync(probedSrc)) {
         await copyFile(probedSrc, outBase + probedExt);
         nativeRecovered = true;
+        recoveredNativeExt = probedExt;
       }
     }
     if (!nativeRecovered) {
@@ -486,6 +523,7 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
       if (globbed) {
         await copyFile(globbed.src, outBase + globbed.ext);
         nativeRecovered = true;
+        recoveredNativeExt = globbed.ext;
       }
     }
   }
@@ -505,8 +543,16 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose }) {
     }
   }
 
-  // --- Meta ---
-  await writeMeta(outBase, uuid, className, importFromCcon, importPackRef);
+  // --- Meta (basename+ext+.meta beside recovered file; no orphans) ---
+  await writeMeta(outBase, uuid, className, {
+    wasCcon: importFromCcon,
+    packRef: importPackRef,
+    flavor,
+    importExt,
+    importRecovered,
+    nativeExt: recoveredNativeExt,
+    nativeRecovered,
+  });
 
   return importRecovered || nativeRecovered;
 }
@@ -662,9 +708,37 @@ async function decodeCconToDoc(buf, outBase) {
   return null;
 }
 
-async function writeMeta(outBase, uuid, className, wasCcon, packRef) {
-  const ext = inferMetaExt(className);
-  const metaPath = outBase + ext + '.meta';
+async function writeMeta(outBase, uuid, className, opts = {}) {
+  const {
+    wasCcon = false,
+    packRef = null,
+    flavor = null,
+    importExt = null,
+    importRecovered = false,
+    nativeExt = null,
+    nativeRecovered = false,
+  } = opts;
+
+  // Decide which file the meta sits beside: basename + ext + '.meta'
+  // (e.g. logo.png.meta, Main.scene.meta). Never emit orphan .png.meta when
+  // the native was not recovered (#33).
+  let fileExt = null;
+
+  if (isPureNativeClass(className)) {
+    if (!nativeRecovered) return;
+    fileExt = nativeExt || '';
+  } else if (className === 'cc.SpriteFrame' && nativeRecovered) {
+    // Prefer colocating with the actual PNG when present.
+    fileExt = nativeExt || '.png';
+  } else if (importRecovered) {
+    fileExt = importExt || inferImportExt(className, flavor);
+  } else if (nativeRecovered) {
+    fileExt = nativeExt || '';
+  } else {
+    return;
+  }
+
+  const metaPath = outBase + fileExt + '.meta';
   const meta = {
     ver: '1.2.7',
     uuid,
@@ -675,34 +749,22 @@ async function writeMeta(outBase, uuid, className, wasCcon, packRef) {
   };
   if (wasCcon) meta.source = 'ccon';
   if (packRef) {
-    meta.packedIn = packRef.packFile;
+    meta.packedIn = packRef.packFile || packRef.packUuid;
     meta.packPosition = packRef.position;
   }
   await writeFile(metaPath, JSON.stringify(meta, null, 2));
 }
 
-function inferMetaExt(className) {
-  // The meta extension mirrors the asset file extension. When the asset is
-  // native-only (texture/audio/font), the meta sits next to the native file.
-  switch (className) {
-    case 'cc.SceneAsset':    return '.fire';  // 2.4 convention; 3.x editor also reads .fire
-    case 'cc.Prefab':        return '.prefab';
-    case 'cc.EffectAsset':   return '.effect';
-    case 'cc.Material':      return '.mtl';
-    case 'cc.AnimationClip': return '.anim';
-    case 'cc.SpriteFrame':   return '';       // sits next to the texture basename
-    case 'cc.Texture2D':     return '';
-    case 'cc.ImageAsset':    return '';
-    case 'cc.AudioClip':     return '';
-    case 'cc.TTFFont':       return '';
-    case 'cc.BitmapFont':    return '';
-    default:                 return '.json';
-  }
+function inferMetaExt(className, flavor) {
+  // Kept for callers/tests: mirrors the primary asset file extension.
+  return inferImportExt(className, flavor);
 }
 
-function inferImportExt(className) {
+function inferImportExt(className, flavor) {
   switch (className) {
-    case 'cc.SceneAsset':    return '.fire';
+    case 'cc.SceneAsset':
+      // True 3.x builds use .scene; 2.4 bundle / classic keep .fire (#32).
+      return flavor === '3.x' ? '.scene' : '.fire';
     case 'cc.Prefab':        return '.prefab';
     case 'cc.EffectAsset':   return '.effect';
     case 'cc.Material':      return '.mtl';
@@ -751,14 +813,19 @@ function classToImporter(className) {
  *
  * 3.x ships TypeScript compiled to ES5. We preserve filenames where possible.
  */
-async function recoverScripts(sourcePath, outputPath, verbose) {
+async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
+  const { key = null, warnings = [] } = extras;
+  const scriptsOut = path.join(outputPath, 'assets', 'Scripts');
+  const concurrency = getMaxParallel();
+  let total = 0;
+
+  // 1) src/chunks (+ other dirs): copy single SystemJS modules; split when a
+  //    file contains multiple System.register calls (#23 / multi-chunk packs).
   const candidates = [
     path.join(sourcePath, 'src', 'chunks'),
     path.join(sourcePath, 'src'),
     path.join(sourcePath, 'cocos-js'),
   ];
-  const scriptsOut = path.join(outputPath, 'assets', 'Scripts');
-  const concurrency = getMaxParallel();
   const copyJobs = [];
 
   for (const dir of candidates) {
@@ -773,6 +840,7 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
       if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
       if (entry.name.startsWith('system.') || entry.name.startsWith('polyfills.')) continue;
       if (entry.name === 'cc.js') continue;
+      if (entry.name === 'settings.js') continue;
       copyJobs.push({
         src: path.join(dir, entry.name),
         dest: path.join(scriptsOut, entry.name),
@@ -795,11 +863,77 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
   }
 
   await forEachPool(copyJobs, concurrency, async ({ src, dest, label }) => {
+    let code;
+    try {
+      code = await readFile(src, 'utf-8');
+    } catch {
+      return;
+    }
+    const registers = countSystemRegisters(code);
+    if (registers > 1) {
+      const split = await splitAndEmitSystemRegisters(code, scriptsOut, verbose);
+      total += split;
+      if (verbose) logger.debug(`Script chunk demux: ${label} → ${split} modules`);
+      return;
+    }
     await mkdir(path.dirname(dest), { recursive: true });
-    await copyFile(src, dest);
+    await writeFile(dest, code);
     await writeScriptMeta(dest);
+    total += 1;
     if (verbose) logger.debug(`Script: ${label}`);
   });
+
+  // 2) Demux packed bundle index.js / game.js into assets/Scripts (#23).
+  //    Still keep the raw copy under assets/<bundle>/ from unpackBundle.
+  const bundleRoots = [
+    path.join(sourcePath, 'assets'),
+    path.join(sourcePath, 'subpackages'),
+  ];
+  for (const root of bundleRoots) {
+    if (!fs.existsSync(root)) continue;
+    let entries;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const bundleDir = path.join(root, entry.name);
+      await maybeDecryptBundleScripts(bundleDir, key, warnings);
+      for (const scriptName of ['index.js', 'game.js']) {
+        const src = path.join(bundleDir, scriptName);
+        if (!fs.existsSync(src)) continue;
+        let code;
+        try {
+          code = await readFile(src, 'utf-8');
+        } catch {
+          continue;
+        }
+        // Skip tiny stubs
+        if (code.length < 80) continue;
+        try {
+          const result = await recoverScripts2x(code, {
+            outputPath,
+            verbose,
+            noAstFallback: false,
+          });
+          const written = (result && result.written) || 0;
+          total += written;
+          if (verbose || written > 0) {
+            logger.info(
+              `Demux ${entry.name}/${scriptName}: ${written} modules `
+              + `(extractor=${result.extractor}, format=${result.format})`,
+            );
+          }
+        } catch (err) {
+          const msg = `demux ${entry.name}/${scriptName}: ${err.message}`;
+          warnings.push(msg);
+          logger.debug(msg);
+        }
+      }
+    }
+  }
 
   // Preserve top-level bootstrap scripts under _boot/.
   const bootFiles = [
@@ -828,7 +962,161 @@ async function recoverScripts(sourcePath, outputPath, verbose) {
     );
   }
 
-  return { total: copyJobs.length };
+  return { total };
+}
+
+/**
+ * Decrypt bundle index.jsc / game.jsc to sibling .js when the plain JS is
+ * missing. Uses existing jscDecryptor + --key / auto-key from reverseEngine.
+ */
+async function maybeDecryptBundleScripts(bundleDir, key, warnings) {
+  for (const base of ['index', 'game']) {
+    const jscPath = path.join(bundleDir, `${base}.jsc`);
+    const jsPath = path.join(bundleDir, `${base}.js`);
+    if (!fs.existsSync(jscPath)) continue;
+    if (fs.existsSync(jsPath)) continue;
+    if (!key) {
+      const msg = `${path.basename(bundleDir)}/${base}.jsc present but no decrypt key`;
+      logger.warn(msg);
+      if (Array.isArray(warnings)) warnings.push(msg);
+      continue;
+    }
+    try {
+      const data = await readFile(jscPath);
+      const decrypted = decryptJscBuffer(data, key);
+      if (!decrypted || decrypted.length === 0) {
+        const msg = `Failed to decrypt ${base}.jsc in ${path.basename(bundleDir)}`;
+        logger.warn(msg);
+        if (Array.isArray(warnings)) warnings.push(msg);
+        continue;
+      }
+      await writeFile(jsPath, decrypted);
+      logger.info(`Decrypted ${path.basename(bundleDir)}/${base}.jsc → ${base}.js`);
+    } catch (err) {
+      const msg = `decrypt ${base}.jsc: ${err.message}`;
+      logger.warn(msg);
+      if (Array.isArray(warnings)) warnings.push(msg);
+    }
+  }
+}
+
+function countSystemRegisters(code) {
+  if (!code) return 0;
+  const matches = code.match(/System\s*\.\s*register\s*\(/g);
+  return matches ? matches.length : 0;
+}
+
+/**
+ * Split a multi-register SystemJS chunk into per-module files under scriptsOut.
+ * Names come from System.register("id", ...) when present; otherwise module_N.js.
+ */
+async function splitAndEmitSystemRegisters(code, scriptsOut, verbose) {
+  const parts = splitSystemRegisterSource(code);
+  let written = 0;
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
+    const safe = sanitizeScriptFileName(part.id || `module_${i}`);
+    const dest = path.join(scriptsOut, `${safe}.js`);
+    await mkdir(path.dirname(dest), { recursive: true });
+    // Avoid clobbering an already-emitted module with the same id.
+    let finalDest = dest;
+    if (fs.existsSync(finalDest)) {
+      finalDest = path.join(scriptsOut, `${safe}_${i}.js`);
+    }
+    await writeFile(finalDest, part.code);
+    await writeScriptMeta(finalDest, part.uuid);
+    written += 1;
+    if (verbose) logger.debug(`SystemJS split: ${path.basename(finalDest)}`);
+  }
+  return written;
+}
+
+function splitSystemRegisterSource(code) {
+  const markerRe = /System\s*\.\s*register\s*\(/g;
+  const starts = [];
+  let m;
+  while ((m = markerRe.exec(code)) !== null) {
+    starts.push(m.index);
+  }
+  if (starts.length === 0) return [];
+
+  const parts = [];
+  for (let i = 0; i < starts.length; i += 1) {
+    const from = starts[i];
+    const to = i + 1 < starts.length ? starts[i + 1] : code.length;
+    let chunk = code.slice(from, to).trim();
+    // Drop trailing junk after the register's closing ');'
+    const endStmt = findRegisterStatementEnd(chunk);
+    if (endStmt > 0) chunk = chunk.slice(0, endStmt).trim();
+    const idMatch = chunk.match(
+      /^System\s*\.\s*register\s*\(\s*['"]([^'"]+)['"]\s*,/,
+    );
+    const uuid = extractRfUuid(chunk);
+    parts.push({
+      id: idMatch ? idMatch[1] : null,
+      uuid,
+      code: chunk.endsWith('\n') ? chunk : `${chunk}\n`,
+    });
+  }
+  return parts;
+}
+
+function findRegisterStatementEnd(chunk) {
+  // Find matching paren for System.register( ... ) then optional ';'
+  const open = chunk.indexOf('(');
+  if (open < 0) return -1;
+  let depth = 0;
+  let inStr = null;
+  let escape = false;
+  for (let i = open; i < chunk.length; i += 1) {
+    const ch = chunk[i];
+    if (inStr) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === inStr) inStr = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      inStr = ch;
+      continue;
+    }
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        let end = i + 1;
+        if (chunk[end] === ';') end += 1;
+        return end;
+      }
+    }
+  }
+  return -1;
+}
+
+function extractRfUuid(code) {
+  if (!code) return null;
+  const rf = code.match(
+    /cc\s*\.\s*_RF\s*\.\s*push\s*\(\s*[^,]+,\s*['"]([0-9a-fA-F-]{22,36}|[A-Za-z0-9+/=]{20,24})['"]/,
+  );
+  return rf ? rf[1] : null;
+}
+
+function sanitizeScriptFileName(id) {
+  let p = String(id || 'module')
+    .replace(/^db:\/\/assets\//i, '')
+    .replace(/^db:\/\//i, '')
+    .replace(/^assets\//i, '')
+    .replace(/^src\//i, '')
+    .replace(/\.(tsx?|jsx?)$/i, '');
+  p = p.replace(/^([/\\])+/, '').replace(/\.\./g, '_').replace(/[\/\\?%*:|"<>]/g, '_');
+  if (!p) p = 'module';
+  return p;
 }
 
 async function* walkJsFiles(root) {
@@ -843,10 +1131,15 @@ async function* walkJsFiles(root) {
   }
 }
 
-async function writeScriptMeta(scriptPath) {
+async function writeScriptMeta(scriptPath, uuidHint) {
+  let uuid = uuidHint || null;
+  if (uuid && uuid.length === 22) {
+    uuid = uuidUtils.decodeUuid(uuid) || uuid;
+  }
+  if (!uuid) uuid = uuidUtils.generateUuid();
   const meta = {
     ver: '1.0.8',
-    uuid: uuidUtils.generateUuid(),
+    uuid,
     isPlugin: false,
     loadPluginInWeb: true,
     loadPluginInNative: true,
@@ -872,4 +1165,13 @@ async function writeProjectDescriptor(outputPath) {
 
 // writeRecoveryReport imported from ../../utils/recoveryReport
 
-module.exports = { reverseProject3x, discoverBundles };
+module.exports = {
+  reverseProject3x,
+  discoverBundles,
+  inferImportExt,
+  inferMetaExt,
+  writeMeta,
+  splitSystemRegisterSource,
+  countSystemRegisters,
+};
+
