@@ -118,7 +118,18 @@ function rehydrateIFileData(doc, options = {}) {
     inlineInstanceRefs(ctx);
   }
 
-  return ctx.instances.slice();
+  // Editor source format is a dense object array `[{__type__}, ...]`.
+  // Drop trailing RootInfo integers / sparse holes left by pre-allocation.
+  const out = ctx.instances.slice();
+  while (out.length > 0) {
+    const tail = out[out.length - 1];
+    if (tail === undefined || typeof tail === 'number') {
+      out.pop();
+      continue;
+    }
+    break;
+  }
+  return out;
 }
 
 function isIFileDataTuple(doc) {

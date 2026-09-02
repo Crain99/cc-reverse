@@ -6,6 +6,9 @@
 - **Issue #33**: Write meta as `basename+ext+.meta` (e.g. `logo.png.meta`); do not emit orphan `.png.meta` when native PNG was not recovered (2.x SpriteFrame + 3.x pure-native)
 - **Issue #32 / #37**: True 3.x builds emit scenes as `.scene` (+ matching meta); classic 2.4 bundle flavor keeps `.fire`
 - Prefer colocating classic 2.x SpriteFrame meta with the `rawAssets` PNG path
+- **Issue #32**: Fold `Texture2D` / `SpriteFrame` marked `subAsset` into parent `ImageAsset` `.png.meta` `subMetas` (Creator layout) instead of orphan `logo@xxxx` / `spriteFrame.json` folders
+- Strip trailing RootInfo from rehydrated IFileData so Prefab/Scene emit dense `[{__type__:...}]` source JSON; rehydrate packed Prefab pack sections end-to-end
+- Demuxed / copied scripts prefer stable UUID from `cc._RF.push` (decoded) over random meta UUIDs — improves #37 script rebind
 
 ### Features
 - **Issue #23**: Demux packed bundle `index.js` / `game.js` into per-module files under `assets/Scripts` with `.meta` (preserves `cc._RF` UUID mounts); split multi-`System.register` chunks similarly. Raw bundle script still copied for reference; recovered script count includes split modules
@@ -14,6 +17,7 @@
 
 ### Tests
 - Regression fixtures for correct meta names, no orphan meta without PNG, `.scene` for 3.x, `.fire` for 2.4 bundle flavor, and multi-script demux from packed `index.js`
+- ImageAsset subMetas folding, packed Prefab rehydrate, redirect skip count, System.register demux RF UUID stability
 
 ## [2.1.1] - 2026-07-23
 

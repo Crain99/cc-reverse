@@ -244,7 +244,7 @@ describe('rehydrateIFileData', () => {
     expect(out[0].mixed).toEqual([1, { __id__: 1 }, { __id__: 2 }]);
   });
 
-  it('preserves RootInfo tail', () => {
+  it('strips RootInfo tail for editor source shape', () => {
     const doc = build({
       sharedClasses: [['cc.Asset', ['_name'], 0]],
       sharedMasks: [[0, 0, 2]],
@@ -254,8 +254,39 @@ describe('rehydrateIFileData', () => {
       ],
     });
     const out = rehydrateIFileData(doc);
-    // Root info is kept at the end; test that the asset itself is at [0].
+    expect(out).toHaveLength(1);
     expect(out[0]).toEqual({ __type__: 'cc.Asset', _name: 'A' });
+  });
+
+  it('rehydrates a packed-style Prefab section into [{__type__}, ...]', () => {
+    // Mirrors extractPackSection output: shared header + one prefab section.
+    const doc = build({
+      sharedClasses: [
+        ['cc.Prefab', ['_name', 'data'], 2, DataTypeID.InstanceRef],
+        ['cc.Node', ['_name', '_children'], 2, DataTypeID.Array_InstanceRef],
+      ],
+      sharedMasks: [
+        [0, 0, 1, 2],
+        [1, 0, 1, 2],
+      ],
+      instances: [
+        [0, 'Button', 1],
+        [1, 'Button', []],
+        0,
+      ],
+    });
+    const out = rehydrateIFileData(doc);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toEqual({
+      __type__: 'cc.Prefab',
+      _name: 'Button',
+      data: { __id__: 1 },
+    });
+    expect(out[1]).toEqual({
+      __type__: 'cc.Node',
+      _name: 'Button',
+      _children: [],
+    });
   });
 
   it('exposes the value-type constructor list', () => {
