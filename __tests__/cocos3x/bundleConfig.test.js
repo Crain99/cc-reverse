@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 const {
   parseBundleConfig,
+  normalizeDbAssetPath,
   getImportPath,
   getNativePath,
   findBundleConfigPath,
@@ -154,5 +155,45 @@ describe('findBundleConfigPath / hasBundleConfig (MD5 Cache)', () => {
     const cfg = parseBundleConfig(raw, '/b');
     expect(cfg.extensionMap.u1).toBe('.png');
     expect(cfg.extensionMap.u0).toBeUndefined();
+  });
+});
+
+describe('normalizeDbAssetPath', () => {
+  it('strips db:// and db:/ (single-slash) prefixes', () => {
+    expect(normalizeDbAssetPath('db://assets/scene/scene')).toBe('assets/scene/scene');
+    expect(normalizeDbAssetPath('db:/assets/scene/scene')).toBe('assets/scene/scene');
+    expect(normalizeDbAssetPath('db:/internal/physics/default-physics-material')).toBe(
+      'internal/physics/default-physics-material',
+    );
+  });
+
+  it('leaves plain relative paths alone', () => {
+    expect(normalizeDbAssetPath('scenes/Main')).toBe('scenes/Main');
+    expect(normalizeDbAssetPath('textures/logo')).toBe('textures/logo');
+  });
+
+  it('passes through nullish', () => {
+    expect(normalizeDbAssetPath(null)).toBe(null);
+    expect(normalizeDbAssetPath(undefined)).toBe(undefined);
+  });
+});
+
+describe('parseBundleConfig — real 3.8 db:/ paths', () => {
+  it('normalizes db:/assets/... path entries (no literal db: segment)', () => {
+    const raw = {
+      name: 'main',
+      debug: true,
+      uuids: ['u-scene', 'u-mat'],
+      paths: {
+        0: ['db:/assets/scene/scene', 0],
+        1: ['db:/internal/physics/default-physics-material', 1],
+      },
+      types: ['cc.SceneAsset', 'cc.PhysicsMaterial'],
+      scenes: { 'db://assets/scene/scene.scene': '0' },
+    };
+    const cfg = parseBundleConfig(raw, '/fake/main');
+    expect(cfg.paths['u-scene'].path).toBe('assets/scene/scene');
+    expect(cfg.paths['u-mat'].path).toBe('internal/physics/default-physics-material');
+    expect(cfg.paths['u-scene'].path.includes('db:')).toBe(false);
   });
 });

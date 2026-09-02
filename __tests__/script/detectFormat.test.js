@@ -36,6 +36,14 @@ describe('detectScriptBundleFormat', () => {
     expect(detectScriptBundleFormat(code)).toBe('cocos-rf');
   });
 
+  test('detects systemjs / System.register packs before browserify', () => {
+    const code = (
+      'System.register("chunks:///_virtual/debug-view-runtime-control.ts",["cc"],'
+      + '(function(t){return{setters:[function(t){}],execute:function(){}}})});'
+    );
+    expect(detectScriptBundleFormat(code)).toBe('systemjs');
+  });
+
   test('returns unknown for plain unrelated js', () => {
     expect(detectScriptBundleFormat('console.log(1);')).toBe('unknown');
   });

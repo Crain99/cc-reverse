@@ -6,6 +6,8 @@ const {
   parentPathOfSubAsset,
   indexImageSubAssets,
   extractRfUuid,
+  splitSystemRegisterSource,
+  sanitizeScriptFileName,
 } = require('../../src/core/cocos3x/engine3x');
 const { uuidUtils } = require('../../src/utils/uuidUtils');
 const { DataTypeID } = require('../../src/core/cocos3x/rehydrate');
@@ -516,18 +518,135 @@ System.register("chunks:///_virtual/Enemy.ts", ["cc"], function (e) {
     const summary = await reverseProject3x({ sourcePath: src, outputPath: out });
 
     expect(summary.scripts.total).toBeGreaterThanOrEqual(2);
-    const heroMetaPath = path.join(out, 'assets', 'Scripts', 'chunks___virtual_Hero.ts.js.meta');
-    // sanitize turns chunks:///_virtual/Hero.ts → chunks___virtual_Hero.ts
-    const scriptsDir = path.join(out, 'assets', 'Scripts');
-    const metas = fs.readdirSync(scriptsDir).filter((f) => f.endsWith('.meta'));
-    expect(metas.length).toBeGreaterThanOrEqual(2);
-    const heroMetaFile = metas.find((f) => /Hero/i.test(f));
-    expect(heroMetaFile).toBeTruthy();
-    const heroMeta = JSON.parse(fs.readFileSync(path.join(scriptsDir, heroMetaFile), 'utf8'));
+    // chunks:///_virtual/Hero.ts → Hero.ts (not chunks___virtual_*)
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'Hero.ts'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'Enemy.ts'))).toBe(true);
+    const heroMeta = JSON.parse(
+      fs.readFileSync(path.join(out, 'assets', 'Scripts', 'Hero.ts.meta'), 'utf8'),
+    );
     expect(heroMeta.uuid).toBe(uuidUtils.decodeUuid('fcmR3XADNLgJ1ByKhqcC5Z'));
     expect(extractRfUuid(chunk)).toBe('fcmR3XADNLgJ1ByKhqcC5Z');
   });
 
+  it('normalizes db:/assets paths so output has no literal db: segment', async () => {
+    const src = path.join(tmp, 'dbslash-build');
+    writeFile(path.join(src, 'application.js'), '// launcher');
+    writeFile(path.join(src, 'src', 'settings.json'), '{}');
+
+    const bundleDir = path.join(src, 'assets', 'main');
+    const config = {
+      name: 'main',
+      debug: true,
+      importBase: 'import',
+      nativeBase: 'native',
+      uuids: ['u-scene'],
+      paths: { 0: ['db:/assets/scene/scene', 0] },
+      types: ['cc.SceneAsset'],
+      scenes: { 'db://assets/scene/scene.scene': '0' },
+      extensionMap: {},
+      versions: { import: [], native: [] },
+    };
+    writeFile(path.join(bundleDir, 'config.json'), JSON.stringify(config));
+    writeFile(
+      path.join(bundleDir, 'import', 'u-', 'u-scene.json'),
+      JSON.stringify({ __type__: 'cc.SceneAsset', _name: 'scene' }),
+    );
+
+    const out = path.join(tmp, 'out-dbslash');
+    await reverseProject3x({ sourcePath: src, outputPath: out, assetsOnly: true });
+
+    const goodA = path.join(out, 'assets', 'main', 'assets', 'scene', 'scene.scene');
+    const goodB = path.join(out, 'assets', 'main', 'scene', 'scene.scene');
+    expect(fs.existsSync(goodA) || fs.existsSync(goodB)).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'main', 'db:'))).toBe(false);
+    // No path segment literally named db:
+    const walk = (dir, acc = []) => {
+      for (const name of fs.readdirSync(dir)) {
+        const full = path.join(dir, name);
+        acc.push(name);
+        if (fs.statSync(full).isDirectory()) walk(full, acc);
+      }
+      return acc;
+    };
+    expect(walk(path.join(out, 'assets', 'main')).includes('db:')).toBe(false);
+  });
+
+  it('demuxes minified multi-System.register index.js like real 3.8 packs', async () => {
+    const src = path.join(tmp, 'sysreg-min-build');
+    writeFile(path.join(src, 'application.js'), '// launcher');
+    writeFile(path.join(src, 'src', 'settings.json'), '{}');
+
+    const bundleDir = path.join(src, 'assets', 'main');
+    writeFile(
+      path.join(bundleDir, 'config.json'),
+      JSON.stringify({
+        name: 'main',
+        debug: true,
+        importBase: 'import',
+        nativeBase: 'native',
+        uuids: [],
+        paths: {},
+        types: [],
+        scenes: {},
+        extensionMap: {},
+        versions: { import: [], native: [] },
+      }),
+    );
+
+    // Head shape mirrors cocos-playable-demo assets/main/index.js
+    const indexJs = (
+      'System.register("chunks:///_virtual/debug-view-runtime-control.ts",["./rollupPluginModLoBabelHelpers.js","cc"],'
+      + '(function(t){var e,o,i,n,s,l;return{setters:[function(t){e=t.applyDecoratedDescriptor},'
+      + 'function(t){s=t.cclegacy,l=t._decorator}],execute:function(){'
+      + 's._RF.push({},"b2bd1+njXxJxaFY3ymm06WU","debug-view-runtime-control",void 0);'
+      + 't("DebugViewRuntimeControl",function(){});s._RF.pop()}}})});'
+      + 'System.register("chunks:///_virtual/scene.ts",["cc"],(function(t){var e;return{setters:[function(t){e=t.cclegacy}],'
+      + 'execute:function(){e._RF.push({},"a1b2c3d4e5f6g7h8i9j0k1","scene",void 0);'
+      + 't("SceneCtrl",function(){});e._RF.pop()}}})});'
+      + 'System.register("chunks:///_virtual/main",["./scene.ts"],(function(){return{setters:[function(){}],execute:function(){}}}));'
+    );
+    writeFile(path.join(bundleDir, 'index.js'), indexJs);
+
+    const out = path.join(tmp, 'out-sysreg-min');
+    const summary = await reverseProject3x({ sourcePath: src, outputPath: out });
+
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'setters.ts'))).toBe(false);
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'debug-view-runtime-control.ts'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'scene.ts'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'assets', 'Scripts', 'main.js'))).toBe(true);
+    expect(summary.scripts.total).toBeGreaterThanOrEqual(3);
+
+    const meta = JSON.parse(
+      fs.readFileSync(
+        path.join(out, 'assets', 'Scripts', 'debug-view-runtime-control.ts.meta'),
+        'utf8',
+      ),
+    );
+    expect(meta.uuid).toBe(uuidUtils.decodeUuid('b2bd1+njXxJxaFY3ymm06WU'));
+  });
+
+});
+
+describe('sanitizeScriptFileName / splitSystemRegisterSource', () => {
+  it('maps chunks:///_virtual ids to sane filenames', () => {
+    expect(sanitizeScriptFileName('chunks:///_virtual/Foo.ts')).toBe('Foo.ts');
+    expect(sanitizeScriptFileName('chunks:///_virtual/game/Bar.ts')).toBe('game/Bar.ts');
+    expect(sanitizeScriptFileName('chunks:///_virtual/main')).toBe('main.js');
+  });
+
+  it('splits minified multi-register packs with ids + aliased _RF uuids', () => {
+    const code = (
+      'System.register("chunks:///_virtual/A.ts",["cc"],(function(t){var s;return{setters:[function(t){s=t.cclegacy}],'
+      + 'execute:function(){s._RF.push({},"b2bd1+njXxJxaFY3ymm06WU","A",void 0);t("A",1);s._RF.pop()}}})});'
+      + 'System.register("chunks:///_virtual/B.ts",["cc"],(function(t){return{setters:[function(){}],execute:function(){t("B",2)}}}));'
+    );
+    const parts = splitSystemRegisterSource(code);
+    expect(parts).toHaveLength(2);
+    expect(parts[0].id).toBe('chunks:///_virtual/A.ts');
+    expect(parts[0].uuid).toBe('b2bd1+njXxJxaFY3ymm06WU');
+    expect(parts[1].id).toBe('chunks:///_virtual/B.ts');
+    expect(parts[0].code.startsWith('System.register')).toBe(true);
+  });
 });
 
 describe('image subAsset path helpers', () => {

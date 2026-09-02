@@ -47,7 +47,11 @@ async function recoverScripts2x(code, options = {}) {
   let records = [];
   let extractor = 'none';
 
-  if (format === 'browserify') {
+  if (format === 'systemjs') {
+    // Handled by engine3x.splitAndEmitSystemRegisters; do not browserify-slice.
+    records = [];
+    extractor = 'systemjs';
+  } else if (format === 'browserify') {
     records = extractBrowserifyModules(code);
     extractor = 'browserify';
   } else if (format === 'webpack') {
@@ -73,7 +77,13 @@ async function recoverScripts2x(code, options = {}) {
   }
 
   // If preferred extractor returned nothing, optionally fall back
-  if (records.length === 0 && extractor !== 'fallback-ast' && !options.noAstFallback) {
+  // (systemjs is demuxed elsewhere — never AST/browserify-slice it here).
+  if (
+    records.length === 0
+    && format !== 'systemjs'
+    && extractor !== 'fallback-ast'
+    && !options.noAstFallback
+  ) {
     logger.warn(`提取器 ${extractor || format} 未得到模块，回退到 AST`);
     records = extractWithAst(code);
     extractor = 'fallback-ast';
@@ -134,12 +144,15 @@ function extractModulesOnly(code, options = {}) {
   let records = [];
   let extractor = 'none';
 
-  if (format === 'browserify' || format === 'cocos-rf') {
+  if (format === 'systemjs') {
+    records = [];
+    extractor = 'systemjs';
+  } else if (format === 'browserify' || format === 'cocos-rf') {
     records = extractBrowserifyModules(code);
     extractor = 'browserify';
   }
 
-  if (records.length === 0 && !options.noAstFallback) {
+  if (records.length === 0 && format !== 'systemjs' && !options.noAstFallback) {
     records = extractWithAst(code);
     extractor = records.length ? 'fallback-ast' : extractor;
   }

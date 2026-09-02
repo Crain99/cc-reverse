@@ -25,6 +25,7 @@ const { uuidUtils } = require('../../utils/uuidUtils');
 const { forEachPool, getMaxParallel } = require('../../utils/asyncPool');
 const {
   parseBundleConfig,
+  normalizeDbAssetPath,
   getImportPath,
   getNativePath,
   findBundleConfigPath,
@@ -372,10 +373,9 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
     const uuid = cfg.scenes[sceneName];
     if (!uuid || handled.has(uuid)) continue;
     if (shouldSkipRedirect(uuid)) continue;
-    // Scene names use the full `db://assets/scene/foo.fire` form in 2.4+ bundles.
-    const pathStr = sceneName
-      .replace(/^db:\/\/(assets\/)?/, '')
-      .replace(/\.(fire|scene)$/, '')
+    // Scene names use `db://assets/...` or `db:/assets/...` (3.8 web-mobile).
+    const pathStr = normalizeDbAssetPath(sceneName)
+      .replace(/\.(fire|scene)$/i, '')
       || `scene/${uuid}`;
     sceneJobs.push({
       uuid,
@@ -446,7 +446,7 @@ async function unpackAsset({ cfg, uuid, info, bundleOut, verbose, flavor }) {
   // what the editor will see.
   const className = info.type || 'cc.Asset';
   const outDir = classOutputDir(className);
-  const relPath = info.path || `${outDir}/${uuid}`;
+  const relPath = normalizeDbAssetPath(info.path) || `${outDir}/${uuid}`;
   const outBase = path.join(bundleOut, relPath);
   await mkdir(path.dirname(outBase), { recursive: true });
 
@@ -1013,6 +1013,19 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
         // Skip tiny stubs
         if (code.length < 80) continue;
         try {
+          // Rollup / SystemJS packs (Creator 3.x web-mobile): never treat as
+          // browserify — that yields a single bogus `setters.ts`.
+          const registers = countSystemRegisters(code);
+          if (registers > 0) {
+            const written = await splitAndEmitSystemRegisters(code, scriptsOut, verbose);
+            total += written;
+            if (verbose || written > 0) {
+              logger.info(
+                `Demux ${entry.name}/${scriptName}: ${written} System.register modules`,
+              );
+            }
+            continue;
+          }
           const result = await recoverScripts2x(code, {
             outputPath,
             verbose,
@@ -1116,17 +1129,19 @@ async function splitAndEmitSystemRegisters(code, scriptsOut, verbose) {
   for (let i = 0; i < parts.length; i += 1) {
     const part = parts[i];
     const safe = sanitizeScriptFileName(part.id || `module_${i}`);
-    const dest = path.join(scriptsOut, `${safe}.js`);
+    const dest = path.join(scriptsOut, safe);
     await mkdir(path.dirname(dest), { recursive: true });
     // Avoid clobbering an already-emitted module with the same id.
     let finalDest = dest;
     if (fs.existsSync(finalDest)) {
-      finalDest = path.join(scriptsOut, `${safe}_${i}.js`);
+      const ext = path.extname(safe) || '.js';
+      const stem = safe.slice(0, safe.length - ext.length);
+      finalDest = path.join(scriptsOut, `${stem}_${i}${ext}`);
     }
     await writeFile(finalDest, part.code);
     await writeScriptMeta(finalDest, part.uuid);
     written += 1;
-    if (verbose) logger.debug(`SystemJS split: ${path.basename(finalDest)}`);
+    if (verbose) logger.debug(`SystemJS split: ${path.relative(scriptsOut, finalDest)}`);
   }
   return written;
 }
@@ -1175,7 +1190,7 @@ function findRegisterStatementEnd(chunk) {
         escape = false;
         continue;
       }
-      if (ch === '\\\\') {
+      if (ch === '\\') {
         escape = true;
         continue;
       }
@@ -1201,22 +1216,44 @@ function findRegisterStatementEnd(chunk) {
 
 function extractRfUuid(code) {
   if (!code) return null;
+  // Minified 3.x packs alias `cc` (e.g. `s._RF.push(...)`) — match any receiver.
   const rf = code.match(
-    /cc\s*\.\s*_RF\s*\.\s*push\s*\(\s*[^,]+,\s*['"]([0-9a-fA-F-]{22,36}|[A-Za-z0-9+/=]{20,24})['"]/,
+    /(?:[A-Za-z_$][\w$]*\s*\.\s*)?_RF\s*\.\s*push\s*\(\s*[^,]+,\s*['"]([0-9a-fA-F-]{22,36}|[A-Za-z0-9+/=]{20,24})['"]/,
   );
   return rf ? rf[1] : null;
 }
 
+/**
+ * Derive a filesystem path under assets/Scripts from a System.register id.
+ * `chunks:///_virtual/Foo.ts` → `Foo.ts`
+ * `chunks:///_virtual/game/Bar.ts` → `game/Bar.ts`
+ */
 function sanitizeScriptFileName(id) {
-  let p = String(id || 'module')
+  let p = String(id || 'module');
+  p = p
+    .replace(/^chunks:\/\/\/_virtual\//i, '')
+    .replace(/^chunks:\/\//i, '')
+    .replace(/^file:\/\/\//i, '')
     .replace(/^db:\/\/assets\//i, '')
-    .replace(/^db:\/\//i, '')
+    .replace(/^db:\/+/i, '')
     .replace(/^assets\//i, '')
-    .replace(/^src\//i, '')
-    .replace(/\.(tsx?|jsx?)$/i, '');
-  p = p.replace(/^([/\\])+/, '').replace(/\.\./g, '_').replace(/[\/\\?%*:|"<>]/g, '_');
-  if (!p) p = 'module';
-  return p;
+    .replace(/^src\//i, '');
+  p = p.replace(/^[/\\]+/, '').replace(/\0/g, '');
+
+  let ext = '';
+  const extMatch = p.match(/\.(tsx?|jsx?)$/i);
+  if (extMatch) {
+    ext = extMatch[0];
+    p = p.slice(0, -ext.length);
+  } else {
+    ext = '.js';
+  }
+
+  const parts = p.split(/[/\\]+/)
+    .map((seg) => seg.replace(/\.\./g, '_').replace(/[?%*:|"<>]/g, '_'))
+    .filter(Boolean);
+  if (parts.length === 0) parts.push('module');
+  return `${parts.join('/')}${ext}`;
 }
 
 async function* walkJsFiles(root) {
@@ -1272,7 +1309,9 @@ module.exports = {
   inferMetaExt,
   writeMeta,
   splitSystemRegisterSource,
+  splitAndEmitSystemRegisters,
   countSystemRegisters,
+  sanitizeScriptFileName,
   indexImageSubAssets,
   parentPathOfSubAsset,
   buildImageSubMetas,
