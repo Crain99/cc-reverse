@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixes
+- Demux MD5-cache bundle scripts (`index.<hash>.js` / `game.<hash>.js`); emit fused `chunks:///main.js` packs as game `main.pack.js` (not vendor `main` stub)
 - Route engine/vendor scripts (_virtual_cc-*, spine/bullet, builtin-pipeline*, rollup helpers, bundle stubs, cocos-js) under assets/Scripts/_vendor/
 - Recovery report: game vs vendor script counts; bundle Named vs Packed columns
 - Decode Creator compressed uuids that carry `@subAsset` / `@mip@format` suffixes so `native/<2>/<decoded>@….png` lookups succeed (was leaving ids compressed when length ≠ 22)

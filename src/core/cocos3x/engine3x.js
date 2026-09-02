@@ -30,6 +30,7 @@ const {
   getNativePath,
   findBundleConfigPath,
   hasBundleConfig,
+  findBundleScriptPath,
 } = require('./bundleConfig');
 const { isCcon, decodeCcon } = require('./ccon');
 const { inspect } = require('./deserializer');
@@ -454,13 +455,14 @@ async function unpackBundle({ bundleDir, outputPath, verbose, flavor, key, warni
   await copyFile(cfgPath, path.join(bundleOut, 'config.original.json'));
 
   // Preserve the bundle's compiled user-script bundle (2.4+ ships this as
-  // <bundle>/game.js or <bundle>/index.js). Demux happens in recoverScripts.
-  for (const scriptName of ['game.js', 'index.js']) {
-    const src = path.join(bundleDir, scriptName);
-    if (fs.existsSync(src)) {
-      await copyFile(src, path.join(bundleOut, scriptName));
-      result.scriptBundle = scriptName;
-    }
+  // <bundle>/game.js or <bundle>/index.js, or MD5-cache index.<hash>.js).
+  // Demux happens in recoverScripts.
+  for (const base of ['game', 'index']) {
+    const src = findBundleScriptPath(bundleDir, base);
+    if (!src) continue;
+    const scriptName = path.basename(src);
+    await copyFile(src, path.join(bundleOut, scriptName));
+    result.scriptBundle = scriptName;
   }
 
   return result;
@@ -1207,9 +1209,10 @@ async function recoverScripts(sourcePath, outputPath, verbose, extras = {}) {
       if (!entry.isDirectory()) continue;
       const bundleDir = path.join(root, entry.name);
       await maybeDecryptBundleScripts(bundleDir, key, warnings);
-      for (const scriptName of ['index.js', 'game.js']) {
-        const src = path.join(bundleDir, scriptName);
-        if (!fs.existsSync(src)) continue;
+      for (const base of ['index', 'game']) {
+        const src = findBundleScriptPath(bundleDir, base);
+        if (!src) continue;
+        const scriptName = path.basename(src);
         let code;
         try {
           code = await readFile(src, 'utf-8');
@@ -1348,7 +1351,13 @@ async function splitAndEmitSystemRegisters(code, scriptsOut, verbose) {
   let vendor = 0;
   for (let i = 0; i < parts.length; i += 1) {
     const part = parts[i];
-    const safe = sanitizeScriptFileName(part.id || `module_${i}`);
+    const rawId = part.id || `module_${i}`;
+    // MD5 / merged packs register as chunks:///main.js with ALL game code inside.
+    // Do not collapse that to vendor `main.js` (reserved for `_virtual/main` stubs).
+    let safe = sanitizeScriptFileName(rawId);
+    if (/^chunks:\/\/\/main\.js$/i.test(String(part.id || '').trim())) {
+      safe = 'main.pack.js';
+    }
     const rel = scriptOutRel(safe);
     const dest = path.join(scriptsOut, rel);
     await mkdir(path.dirname(dest), { recursive: true });
@@ -1467,6 +1476,8 @@ const VENDOR_SCRIPT_BASENAMES = new Set([
  */
 function isEngineVendorScript(relPathOrId) {
   const raw = String(relPathOrId || '');
+  // Fused web-mobile pack id — holds user components, not the `_virtual/main` stub.
+  if (/^chunks:\/\/\/main\.js$/i.test(raw.trim())) return false;
   // Strip known virtual prefixes when callers pass a raw register id.
   let p = raw
     .replace(/^chunks:\/\/\/_virtual\//i, '')

@@ -8,6 +8,7 @@ const {
   getNativePath,
   findBundleConfigPath,
   hasBundleConfig,
+  findBundleScriptPath,
 } = require('../../src/core/cocos3x/bundleConfig');
 
 describe('parseBundleConfig', () => {
@@ -224,5 +225,31 @@ describe('parseBundleConfig — @suffix uuid decode', () => {
     expect(native.replace(/\\/g, '/')).toMatch(
       /native\/6f\/6f01cf7f-81bf-4a7e-bd5d-0afc19696480@b47c0@40c10\.png$/,
     );
+  });
+});
+
+
+describe('findBundleScriptPath', () => {
+  let tmp;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-bundle-script-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('prefers plain index.js over hashed', () => {
+    fs.writeFileSync(path.join(tmp, 'index.js'), '// plain');
+    fs.writeFileSync(path.join(tmp, 'index.abc12.js'), '// hashed');
+    expect(path.basename(findBundleScriptPath(tmp, 'index'))).toBe('index.js');
+  });
+
+  it('finds MD5-cache index.<hash>.js when plain is missing', () => {
+    fs.writeFileSync(path.join(tmp, 'index.3e752.js'), '// hashed pack');
+    expect(path.basename(findBundleScriptPath(tmp, 'index'))).toBe('index.3e752.js');
+  });
+
+  it('returns null when no script entry exists', () => {
+    expect(findBundleScriptPath(tmp, 'index')).toBeNull();
   });
 });
