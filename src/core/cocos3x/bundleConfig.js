@@ -12,6 +12,22 @@ const path = require('path');
 const { uuidUtils } = require('../../utils/uuidUtils');
 
 /**
+ * Strip Cocos db:// or db:/ URL prefixes from config.paths / scene keys so
+ * output paths stay project-relative (never a literal `db:` directory).
+ * Real 3.8 web-mobile builds often use ONE slash: `db:/assets/scene/scene`.
+ *
+ * @param {string|null|undefined} relPath
+ * @returns {string|null|undefined}
+ */
+function normalizeDbAssetPath(relPath) {
+  if (relPath == null || typeof relPath !== 'string') return relPath;
+  let s = relPath.replace(/^db:\/+/i, '');
+  // Drop leading ./ noise only — keep a leading `assets/` segment when present.
+  s = s.replace(/^(?:\.\/)+/, '');
+  return s;
+}
+
+/**
  * Inflate a raw config.json per the same logic the runtime uses at load time.
  *
  * @param {object} raw     Parsed config.json.
@@ -48,7 +64,7 @@ function parseBundleConfig(raw, baseDir) {
     const typeIndex = entry[1];
     const subAssetFlag = entry[2];
     paths[uuid] = {
-      path: relPath,
+      path: normalizeDbAssetPath(relPath),
       type: typeIndex != null ? types[typeIndex] : null,
       subAsset: subAssetFlag === 1 || subAssetFlag === true,
     };
@@ -210,6 +226,7 @@ function hasBundleConfig(bundleDir, fsLike) {
 
 module.exports = {
   parseBundleConfig,
+  normalizeDbAssetPath,
   getImportPath,
   getNativePath,
   findBundleConfigPath,

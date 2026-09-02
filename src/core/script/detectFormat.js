@@ -4,7 +4,7 @@
  */
 
 /**
- * @typedef {'browserify' | 'webpack' | 'cocos-rf' | 'unknown'} ScriptBundleFormat
+ * @typedef {'systemjs' | 'browserify' | 'webpack' | 'cocos-rf' | 'unknown'} ScriptBundleFormat
  */
 
 /**
@@ -20,6 +20,13 @@ function detectScriptBundleFormat(code) {
   const mid = code.slice(midStart, midStart + 32 * 1024);
   const tail = code.slice(Math.max(0, code.length - 32 * 1024));
   const sample = head + '\n' + mid + '\n' + tail;
+
+  // Creator 3.x rollup / SystemJS packs — MUST win over browserify heuristics.
+  // Minified setters:[function( overlap browserify's `: [function(` probe and
+  // otherwise yield a single bogus `setters.ts` module.
+  if (/System\s*\.\s*register\s*\(/.test(sample)) {
+    return 'systemjs';
+  }
 
   // Cocos browserify / prelude: window.__require = function ... }({ "path":[function(
   if (
